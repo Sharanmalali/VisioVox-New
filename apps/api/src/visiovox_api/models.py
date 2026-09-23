@@ -76,9 +76,16 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = _pk("usr")
+    # Firebase owns identity (ADR-0016); this row is the anchor eight other
+    # tables hang their foreign keys off, and a mirror of the token's claims.
+    # Nullable so rows created before the migration can be adopted on first
+    # sign-in rather than orphaning their projects.
+    firebase_uid: Mapped[str | None] = mapped_column(Text, unique=True)
     email: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     email_verified_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-    password_hash: Mapped[str | None] = mapped_column(Text)
+    # "password", "google.com", "github.com" - recorded so an operator can see
+    # how someone signs in without that becoming an investigation.
+    auth_provider: Mapped[str | None] = mapped_column(Text)
     display_name: Mapped[str | None] = mapped_column(Text)
     plan: Mapped[str] = mapped_column(Text, nullable=False, server_default="free")
     data_region: Mapped[str] = mapped_column(Text, nullable=False, server_default="eu")
@@ -106,48 +113,6 @@ class User(Base):
         CheckConstraint(_in_list("data_region", ("eu", "us", "in")), name="users_region_check"),
         CheckConstraint("retention_days BETWEEN 1 AND 365", name="users_retention_check"),
     )
-
-
-class Session(Base):
-    __tablename__ = "sessions"
-
-    id: Mapped[str] = _pk("ses")
-    user_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    user_agent: Mapped[str | None] = mapped_column(Text)
-    ip_hash: Mapped[str | None] = mapped_column(Text)  # hashed, never raw
-    created_at: Mapped[dt.datetime] = _now_col()
-    last_seen_at: Mapped[dt.datetime] = _now_col()
-    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class RefreshToken(Base):
-    """Rotating refresh tokens with family reuse detection (FR-ACC-04).
-
-    Only the SHA-256 of the token is stored. Presenting one whose used_at is
-    already set means it was captured and replayed, so the whole family is
-    revoked rather than only that token.
-    """
-
-    __tablename__ = "refresh_tokens"
-
-    id: Mapped[str] = _pk("rft")
-    family_id: Mapped[str] = mapped_column(Text, nullable=False)
-    user_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
-    )
-    session_id: Mapped[str] = mapped_column(
-        Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
-    )
-    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
-    parent_id: Mapped[str | None] = mapped_column(Text, ForeignKey("refresh_tokens.id"))
-    used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-    expires_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-
-    __table_args__ = (Index("ix_refresh_tokens_family", "family_id"),)
 
 
 class Project(Base):

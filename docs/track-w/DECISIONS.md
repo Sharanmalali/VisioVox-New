@@ -104,3 +104,39 @@ Decisions taken during implementation that Part 1 did not anticipate. Append; do
   constraint and specifies managed services and Kubernetes. W9 supersedes it. Flagged in the
   document itself rather than deleted, because its threat model and topology reasoning are still
   sound.
+
+### 2026-09-23 — identity moved to Firebase (supersedes W4)
+
+Asked for directly, after the auth UI was already built and working. The
+self-hosted auth backend is **gone**, not wrapped: no `/v1/auth/*` routes, no
+`sessions` or `refresh_tokens` tables, no access-token minting, no refresh
+cookie. `security.py` survives only as Argon2 password hashing for share links.
+
+- **What this buys.** Google and GitHub sign-in, password reset and email
+  verification stop being ours to build, host and get right. Reset and
+  verification email delivery in particular were unbuilt and had no free path.
+- **What it costs, recorded in ADR-0016 rather than discovered later.**
+  Refresh-token reuse detection is no longer a property we store and can prove;
+  deleting a person now takes two systems, and neither alone is complete;
+  identity is a third-party directory we do not control.
+- **`users.firebase_uid` is nullable on purpose.** Rows predating the migration
+  are adopted by email on first sign-in, so existing projects keep their owner
+  instead of being orphaned behind a new row.
+- **Token persistence is `browserSessionPersistence`.** Firebase defaults to
+  IndexedDB, which survives tab close and is readable by any script on the
+  origin — the same exposure the W4 httpOnly-cookie work existed to avoid. This
+  is the closest equivalent Firebase offers; it is weaker, and that is the
+  trade.
+- **`FIREBASE_CHECK_REVOKED=true`.** Costs a round trip per request. Without it
+  "sign out everywhere" is advisory for up to an hour, which is not what the
+  phrase means to a user.
+
+Tests: `tests/test_api_auth.py` deleted; `tests/test_firebase_identity.py`
+replaces it, covering the part that is still ours — the mapping from verified
+claims to a local row. `tests/authstub.py` signs requests by patching
+verification at the boundary.
+
+**Caution learned here:** `sign_in()` first resolved its identity *inside* the
+lambda, so every request in a test arrived as a different person. It surfaced as
+a 404 on a project the test had just created — nowhere near the cause. Resolve
+once, before the closure.

@@ -13,6 +13,7 @@
     "@react-three/fiber": "^9",
     "@tailwindcss/postcss": "^4",
     "@visiovox/ts-client": "workspace:*",
+    "firebase": "^11",
     "hls.js": "^1.7.1",
     "next": "^15.1.0",
     "react": "^19.0.0",

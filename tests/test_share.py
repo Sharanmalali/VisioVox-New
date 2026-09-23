@@ -11,11 +11,11 @@ this feature could quietly leak someone's meeting:
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
+from authstub import sign_in
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -61,13 +61,11 @@ async def client() -> AsyncIterator[AsyncClient]:
         await dispose_engine()
 
 
-async def _ready_project(client: AsyncClient) -> tuple[str, dict[str, str]]:
+async def _ready_project(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> tuple[str, dict[str, str]]:
     """A signed-in user with a project marked ready and carrying a manifest."""
-    email = f"share-{uuid.uuid4().hex[:12]}@example.com"
-    registered = await client.post(
-        "/v1/auth/register", json={"email": email, "password": "correct-horse-battery"}
-    )
-    auth = {"Authorization": f"Bearer {registered.json()['access_token']}"}
+    auth = sign_in(monkeypatch)
 
     created = await client.post(
         "/v1/projects", json={"title": "Board meeting", "rights_attested": True}, headers=auth
@@ -98,8 +96,10 @@ async def _ready_project(client: AsyncClient) -> tuple[str, dict[str, str]]:
 # --------------------------------------------------------------------------
 
 
-async def test_a_share_opens_without_an_account(client: AsyncClient) -> None:
-    project_id, auth = await _ready_project(client)
+async def test_a_share_opens_without_an_account(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
     token = created.json()["token"]
 
@@ -109,17 +109,21 @@ async def test_a_share_opens_without_an_account(client: AsyncClient) -> None:
     assert response.json()["title"] == "Board meeting"
 
 
-async def test_the_token_is_returned_only_once(client: AsyncClient) -> None:
-    project_id, auth = await _ready_project(client)
+async def test_the_token_is_returned_only_once(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, auth = await _ready_project(client, monkeypatch)
     await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
 
     listed = await client.get(f"/v1/projects/{project_id}/shares", headers=auth)
     assert listed.json()["items"][0]["token"] is None
 
 
-async def test_revocation_takes_effect_immediately(client: AsyncClient) -> None:
+async def test_revocation_takes_effect_immediately(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A revoked share that still opens is a privacy incident, not a cache miss."""
-    project_id, auth = await _ready_project(client)
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
     token = created.json()["token"]
     share_id = created.json()["id"]
@@ -132,10 +136,12 @@ async def test_revocation_takes_effect_immediately(client: AsyncClient) -> None:
     assert (await client.get(f"/v1/shared/{token}")).status_code == 404
 
 
-async def test_a_scoped_share_carries_only_that_speaker(client: AsyncClient) -> None:
+async def test_a_scoped_share_carries_only_that_speaker(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The manifest is the authorisation for the media, so scoping has to happen
     server-side rather than in the player."""
-    project_id, auth = await _ready_project(client)
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(
         f"/v1/projects/{project_id}/shares", json={"speaker_ordinal": 2}, headers=auth
     )
@@ -148,15 +154,19 @@ async def test_a_scoped_share_carries_only_that_speaker(client: AsyncClient) -> 
     assert "spk_3_f.m4a" not in str(body)
 
 
-async def test_an_unscoped_share_carries_everyone(client: AsyncClient) -> None:
-    project_id, auth = await _ready_project(client)
+async def test_an_unscoped_share_carries_everyone(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
     body = (await client.get(f"/v1/shared/{created.json()['token']}")).json()
     assert len(body["manifest"]["speakers"]) == 3
 
 
-async def test_a_password_protected_share_refuses_without_it(client: AsyncClient) -> None:
-    project_id, auth = await _ready_project(client)
+async def test_a_password_protected_share_refuses_without_it(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(
         f"/v1/projects/{project_id}/shares", json={"password": "open-sesame"}, headers=auth
     )
@@ -168,10 +178,10 @@ async def test_a_password_protected_share_refuses_without_it(client: AsyncClient
 
 
 async def test_an_unknown_token_is_indistinguishable_from_a_revoked_one(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Different answers would tell a stranger whether a token ever existed."""
-    project_id, auth = await _ready_project(client)
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
     await client.delete(f"/v1/projects/{project_id}/shares/{created.json()['id']}", headers=auth)
 
@@ -182,15 +192,17 @@ async def test_an_unknown_token_is_indistinguishable_from_a_revoked_one(
     assert revoked.json()["detail"] == never_existed.json()["detail"]
 
 
-async def test_shared_pages_are_not_indexed(client: AsyncClient) -> None:
-    project_id, auth = await _ready_project(client)
+async def test_shared_pages_are_not_indexed(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
     response = await client.get(f"/v1/shared/{created.json()['token']}")
     assert "noindex" in response.headers["X-Robots-Tag"]
 
 
-async def test_views_are_counted(client: AsyncClient) -> None:
-    project_id, auth = await _ready_project(client)
+async def test_views_are_counted(client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
     token = created.json()["token"]
 
@@ -201,22 +213,26 @@ async def test_views_are_counted(client: AsyncClient) -> None:
     assert listed.json()["items"][0]["access_count"] == 3
 
 
-async def test_another_users_project_cannot_be_shared(client: AsyncClient) -> None:
+async def test_another_users_project_cannot_be_shared(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Invariant 4: 404 rather than 403, so the endpoint is not an existence
     oracle for other people's projects."""
-    project_id, _ = await _ready_project(client)
-    _, other_auth = await _ready_project(client)
+    project_id, _ = await _ready_project(client, monkeypatch)
+    _, other_auth = await _ready_project(client, monkeypatch)
 
     response = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=other_auth)
     assert response.status_code == 404
 
 
-async def test_the_raw_token_is_never_stored(client: AsyncClient) -> None:
+async def test_the_raw_token_is_never_stored(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from visiovox_api.models import ShareLink
 
-    project_id, auth = await _ready_project(client)
+    project_id, auth = await _ready_project(client, monkeypatch)
     created = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
     token = created.json()["token"]
 

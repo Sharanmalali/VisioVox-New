@@ -12,7 +12,9 @@ make dev          # postgres, redis, minio, api, web, mock worker
 make seed
 ```
 
-→ http://localhost:3000 · `demo@visiovox.local` / `demo1234`
+→ http://localhost:3000 — sign up with any email. Identity is Firebase's
+(ADR-0016), so there is no seeded demo account and no password stored here;
+`docs/23-runbook.md` §2 has the one-time console setup.
 
 No GPU required — the mock pipeline returns fixture results.
 

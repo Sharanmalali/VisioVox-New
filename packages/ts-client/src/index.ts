@@ -16,7 +16,6 @@
 import type { components } from './generated/api';
 
 export type Schemas = components['schemas'];
-export type TokenResponse = Schemas['TokenResponse'];
 export type UserResponse = Schemas['UserResponse'];
 export type ProjectResponse = Schemas['ProjectResponse'];
 export type ProjectListResponse = Schemas['ProjectListResponse'];
@@ -46,67 +45,48 @@ export class ApiError extends Error {
   }
 }
 
-export interface Tokens {
-  accessToken: string;
-  refreshToken: string;
-}
-
 export interface ClientOptions {
   baseUrl: string;
-  tokens?: Tokens | undefined;
-  /** Called whenever tokens change, so the caller can persist them. */
-  onTokens?: ((tokens: Tokens | null) => void) | undefined;
+  /**
+   * Resolves the current ID token, or null when signed out.
+   *
+   * Called per request rather than once: the identity provider caches and
+   * renews, so asking every time is the intended usage and means this client
+   * never holds a credential or reasons about expiry.
+   */
+  getToken?: (() => Promise<string | null>) | undefined;
   fetchImpl?: typeof fetch | undefined;
 }
 
 export class VisioVoxClient {
-  private tokens: Tokens | null;
   private readonly baseUrl: string;
-  private readonly onTokens: ((tokens: Tokens | null) => void) | undefined;
+  private readonly getToken: (() => Promise<string | null>) | undefined;
   private readonly fetchImpl: typeof fetch;
-  /** In-flight refresh, shared by every request that hits a 401 at once. */
-  private refreshing: Promise<boolean> | null = null;
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
-    this.tokens = options.tokens ?? null;
-    this.onTokens = options.onTokens;
+    this.getToken = options.getToken;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
-  }
-
-  private setTokens(tokens: Tokens | null): void {
-    this.tokens = tokens;
-    this.onTokens?.(tokens);
   }
 
   private async raw(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
-    // Auth endpoints set and read the refresh cookie; everything else is
-    // bearer-authenticated and has no business carrying it. Spread rather than
-    // assigned undefined, because exactOptionalPropertyTypes distinguishes
-    // "absent" from "present and undefined".
-    const credentials: { credentials?: RequestCredentials } = path.startsWith('/v1/auth')
-      ? { credentials: 'include' }
-      : {};
     if (!headers.has('content-type') && init.body !== undefined) {
       headers.set('content-type', 'application/json');
     }
-    if (this.tokens) {
-      headers.set('authorization', `Bearer ${this.tokens.accessToken}`);
-    }
-    return this.fetchImpl(`${this.baseUrl}${path}`, { ...init, ...credentials, headers });
+    const token = this.getToken ? await this.getToken() : null;
+    if (token) headers.set('authorization', `Bearer ${token}`);
+    return this.fetchImpl(`${this.baseUrl}${path}`, { ...init, headers });
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let response = await this.raw(path, init);
 
-    // Attempted even with no access token in memory: after a reload the
-    // cookie is all that survives, and it is enough to recover the session.
+    // A 401 usually means the cached token went stale between resolve and
+    // arrival. The provider renews on demand, so one retry is the whole
+    // recovery - there is no refresh token here to rotate.
     if (response.status === 401) {
-      const refreshed = await this.refreshOnce();
-      if (refreshed) {
-        response = await this.raw(path, init);
-      }
+      response = await this.raw(path, init);
     }
 
     if (!response.ok) {
@@ -119,9 +99,7 @@ export class VisioVoxClient {
   private async requestNoContent(path: string, init: RequestInit = {}): Promise<void> {
     let response = await this.raw(path, init);
     if (response.status === 401) {
-      if (await this.refreshOnce()) {
-        response = await this.raw(path, init);
-      }
+      response = await this.raw(path, init);
     }
     if (!response.ok) {
       throw new ApiError(response.status, await this.readDetail(response));
@@ -142,72 +120,10 @@ export class VisioVoxClient {
     }
   }
 
-  /** At most one refresh in flight; concurrent callers await the same promise. */
-  private refreshOnce(): Promise<boolean> {
-    this.refreshing ??= this.doRefresh().finally(() => {
-      this.refreshing = null;
-    });
-    return this.refreshing;
-  }
-
-  private async doRefresh(): Promise<boolean> {
-    // No stored refresh token is needed: it rides as an httpOnly cookie that
-    // this code cannot read, which is the point. `credentials: 'include'` is
-    // what attaches it on a cross-origin call.
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      credentials: 'include',
-    });
-    if (!response.ok) {
-      // Reuse detection revokes the family, so there is nothing to retry with.
-      this.setTokens(null);
-      return false;
-    }
-    const body = (await response.json()) as TokenResponse;
-    this.setTokens({
-      accessToken: body.access_token,
-      // Empty for browsers: the real one is in the cookie. Kept in the shape so
-      // script clients, which do receive it, still work unchanged.
-      refreshToken: body.refresh_token ?? '',
-    });
-    return true;
-  }
-
-  // ---- auth ----
-
-  async register(email: string, password: string, displayName?: string): Promise<TokenResponse> {
-    const body = await this.request<TokenResponse>('/v1/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({
-        email,
-        password,
-        ...(displayName !== undefined ? { display_name: displayName } : {}),
-      }),
-    });
-    this.setTokens({ accessToken: body.access_token, refreshToken: body.refresh_token ?? '' });
-    return body;
-  }
-
-  async login(email: string, password: string): Promise<TokenResponse> {
-    const body = await this.request<TokenResponse>('/v1/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    this.setTokens({ accessToken: body.access_token, refreshToken: body.refresh_token ?? '' });
-    return body;
-  }
-
-  async logout(): Promise<void> {
-    // Runs even with nothing in memory. After a reload the cookie is all that
-    // survives, and returning early would leave a live session on the server
-    // while the interface claims to be signed out.
-    await this.requestNoContent('/v1/auth/logout', {
-      method: 'POST',
-      body: JSON.stringify({ refresh_token: this.tokens?.refreshToken ?? null }),
-    });
-    this.setTokens(null);
-  }
+  // ---- identity ----
+  //
+  // Sign-in, registration and sign-out are the identity provider's, not ours.
+  // What remains is the call that materialises the local user row.
 
   me(): Promise<UserResponse> {
     return this.request<UserResponse>('/v1/auth/me');

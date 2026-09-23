@@ -1,8 +1,10 @@
-"""Idempotency keys and auth backoff (docs/11 §1, docs/15 §9).
+"""Idempotency keys (docs/11 §1).
 
-Against a fake Redis: the behaviour worth pinning is the state machine and the
-delay curve, both of which are deterministic and would only be obscured by real
-infrastructure.
+Against a fake Redis: the behaviour worth pinning is the state machine, which
+is deterministic and would only be obscured by real infrastructure.
+
+The exponential-backoff tests that lived here went with ADR-0016 — Firebase
+rate-limits sign-in attempts now, and `authguard` no longer exists.
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
-from visiovox_api import authguard, idempotency
+from visiovox_api import idempotency
 from visiovox_api.config import Settings
 
 
@@ -239,83 +241,3 @@ async def test_stored_record_carries_no_raw_key() -> None:
     for stored_key, stored in redis.store.items():
         assert "secret-key-value" not in stored_key
         assert "secret-key-value" not in json.dumps(stored)
-
-
-# --------------------------------------------------------------------------
-# auth backoff
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("failures", [0, 1, 2, 3])
-def test_early_failures_cost_nothing(failures: int) -> None:
-    """Stale password manager entries and caps lock are not attacks."""
-    assert authguard.delay_for(failures) == 0
-
-
-def test_delay_doubles() -> None:
-    assert authguard.delay_for(4) == 2
-    assert authguard.delay_for(5) == 4
-    assert authguard.delay_for(6) == 8
-    assert authguard.delay_for(7) == 16
-
-
-def test_delay_is_capped() -> None:
-    """An uncapped doubling turns a security control into a denial of service
-    against the person it protects."""
-    assert authguard.delay_for(50) == authguard.MAX_DELAY_SECONDS
-
-
-async def test_no_backoff_before_the_threshold() -> None:
-    redis = FakeRedis()
-    for _ in range(3):
-        await authguard.record_failure(redis, "a@example.com")
-    await authguard.assert_not_backed_off(redis, _settings(), "a@example.com")
-
-
-async def test_backoff_engages_after_repeated_failures() -> None:
-    redis = FakeRedis()
-    for _ in range(5):
-        await authguard.record_failure(redis, "a@example.com")
-    with pytest.raises(HTTPException) as exc:
-        await authguard.assert_not_backed_off(redis, _settings(), "a@example.com")
-    assert exc.value.status_code == 429
-    assert exc.value.headers is not None
-    assert int(exc.value.headers["Retry-After"]) > 0
-
-
-async def test_success_clears_the_run_of_failures() -> None:
-    redis = FakeRedis()
-    for _ in range(6):
-        await authguard.record_failure(redis, "a@example.com")
-    await authguard.clear(redis, "a@example.com")
-    await authguard.assert_not_backed_off(redis, _settings(), "a@example.com")
-
-
-async def test_backoff_is_per_account() -> None:
-    """An attacker changes address freely; the victim cannot change the email
-    being targeted."""
-    redis = FakeRedis()
-    for _ in range(6):
-        await authguard.record_failure(redis, "victim@example.com")
-    await authguard.assert_not_backed_off(redis, _settings(), "someone-else@example.com")
-
-
-async def test_email_is_not_stored_in_plaintext() -> None:
-    """The counters must not become a readable list of registered addresses."""
-    redis = FakeRedis()
-    await authguard.record_failure(redis, "person@example.com")
-    assert all("person@example.com" not in k for k in redis.store)
-
-
-async def test_email_matching_is_case_insensitive() -> None:
-    redis = FakeRedis()
-    for _ in range(6):
-        await authguard.record_failure(redis, "Person@Example.com")
-    with pytest.raises(HTTPException):
-        await authguard.assert_not_backed_off(redis, _settings(), "person@example.com")
-
-
-async def test_redis_down_does_not_block_sign_in() -> None:
-    await authguard.assert_not_backed_off(
-        FakeRedis(fail=True), _settings(rate_limit_fail_open=True), "a@example.com"
-    )

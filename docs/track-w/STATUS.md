@@ -2,7 +2,7 @@
 
 > **Update this at the end of every working session.** It is the resume pointer.
 
-- **Last updated:** 2026-09-16
+- **Last updated:** 2026-09-23
 - **Current phase:** **All W0–W9 complete.** Remaining work is operational, not phased.
 - **State:** 🟢 The product works end to end on real media and the stack is deployable.
 - **Branch:** `feat/phase6-playback-engine`
@@ -17,7 +17,7 @@
 | W1 — Limits, quotas, security | ✅ Done |
 | W2 — Large upload | ✅ Done |
 | W3 — Design system | ✅ Done |
-| W4 — Auth UI | ✅ Done — refresh token now in an httpOnly cookie |
+| W4 — Auth UI | ✅ Done — **re-based on Firebase 2026-09-23** (ADR-0016); the self-hosted backend is deleted |
 | W5 — Upload UI + engaged wait | ✅ Done |
 | W6 — Preview, export, download | ✅ Done |
 | W7 — Sharing | ✅ Done |
@@ -29,12 +29,16 @@
 ## Verified
 
 ```
-uv run pytest -m "not gpu"        567 passed
-uv run ruff check                  clean
-uv run mypy apps services tests    clean
+uv run pytest                      547 passed, 3 skipped   (2026-09-23)
+uv run ruff check .                clean
+uv run mypy .                      clean, 143 files
+apps/web tsc --noEmit              clean
 node scripts/check-contrast.mjs    46 pairings, both themes
 pnpm --filter @visiovox/web build  9 routes
 ```
+
+The count fell from 567 because `tests/test_api_auth.py` went with the auth
+backend it tested; `tests/test_firebase_identity.py` (13 tests) replaces it.
 
 **The real pipeline**, on 60 s of genuine AMI meeting audio with the C2-v2 checkpoint:
 125.5 GPU-seconds, ~2.1x realtime, all eight stages, producing a manifest, an isolated track and
@@ -69,6 +73,15 @@ into both bundles, and nothing published to the host.
 ---
 
 ## Known gaps, honestly
+
+- **Firebase must be configured before anyone can sign in.** A fresh clone has
+  no account-creation path of its own; `docs/23-runbook.md` §2 has the one-time
+  console setup. Unconfigured, the UI says so rather than failing silently.
+- **`tests/test_phase2_flow.py::test_rerun_skips_completed_stages` failed once,
+  on 2026-09-23, inside a full run and never since** — six consecutive full runs green,
+  and it passes alone and as a module. A SQLAlchemy error under full-suite load,
+  so most likely connection-pool contention rather than a logic fault. Recorded
+  because an intermittent failure that nobody wrote down gets rediscovered.
 
 - **`upload_peak_multiplier` is still 2.5 and unmeasured.** The pipeline runs now, so it can be
   measured from a real job's peak scratch usage. Every computed upload limit inherits its honesty.

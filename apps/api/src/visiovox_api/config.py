@@ -38,16 +38,16 @@ class Settings(BaseSettings):
     next_public_app_url: str = "http://localhost:3000"
     api_internal_url: str = "http://localhost:8000"
 
-    # --- auth ---
-    # RFC 7518 3.2 wants >= 32 bytes for HS256. The default is dev-only and
-    # long enough not to warn; production must override it.
-    auth_secret: SecretStr = SecretStr("dev-only-insecure-secret-replace-in-every-real-deployment")
-    access_token_ttl_seconds: int = 600
-    refresh_token_ttl_days: int = 30
-    # "lax" is right when the app and API share a registrable domain, which
-    # they do behind one tunnel. A genuinely cross-site deployment needs
-    # "none", which browsers only honour together with Secure.
-    refresh_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    # --- firebase identity (ADR-0016) ---
+    # The project whose tokens we accept. An ID token signed for any other
+    # project must be rejected, so this is the audience check and not a label.
+    firebase_project_id: str = ""
+    # Service-account JSON. A private key: it lives outside the repo and
+    # outside the image, mounted at runtime.
+    firebase_credentials_file: str = ""
+    # Ask Firebase whether the session was revoked, at the cost of a round trip
+    # per request. Off, and "sign out everywhere" is advisory for up to an hour.
+    firebase_check_revoked: bool = True
 
     # --- database ---
     database_url: str = "postgresql+asyncpg://visiovox:visiovox@localhost:5432/visiovox"

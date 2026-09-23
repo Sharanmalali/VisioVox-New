@@ -1,54 +1,52 @@
 'use client';
 
 /**
- * Client-side session and API access.
+ * Client-side session and API access (ADR-0016).
  *
- * **Nothing is persisted.** The access token lives in memory for its ten
- * minutes and the refresh token is an httpOnly cookie this code cannot read
- * (docs/28 §W4). Storing either in localStorage would mean any XSS on any page
- * is a full account takeover that survives a reload — the exact thing the
- * cookie exists to prevent, undone by convenience.
- *
- * The cost is that a reload starts signed-out until the first refresh returns.
- * `hydrate()` performs that refresh, so the gap is one request rather than a
- * re-login.
+ * Firebase owns the session; this holds no credential of its own. The API
+ * client asks for a fresh ID token before every request, and Firebase serves
+ * it from its own cache and renews it when it is close to expiring — so the
+ * app never has to think about refresh, rotation or expiry.
  *
  * Zustand selectors are always narrow (repository convention). Subscribing to
  * the whole store re-renders every consumer on any change, which is the
  * documented cause of the player dropping from 60 fps to 10.
  */
 
-import { VisioVoxClient, type Tokens } from '@visiovox/ts-client';
+import { VisioVoxClient } from '@visiovox/ts-client';
 import { create } from 'zustand';
+
+import { idToken, signOutEverywhere, watchAuth } from '@/lib/firebase';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
-/** Memory only. Deliberately not localStorage, sessionStorage or a cookie. */
-let inMemoryTokens: Tokens | null = null;
+/**
+ * The token the SSE stream needs.
+ *
+ * `EventSource` cannot set an Authorization header, so the progress stream
+ * takes the token on the query string. Kept here as the last value Firebase
+ * handed out, because that call is async and building a URL is not.
+ */
+let lastToken: string | null = null;
 
 let clientSingleton: VisioVoxClient | null = null;
 
 export function api(): VisioVoxClient {
   clientSingleton ??= new VisioVoxClient({
     baseUrl: API_BASE,
-    onTokens: (tokens) => {
-      inMemoryTokens = tokens;
-      useSession.setState({ signedIn: tokens !== null });
+    // Resolved per request rather than stored. Firebase caches and renews, so
+    // this is the intended usage and costs nothing when the token is fresh.
+    getToken: async () => {
+      const token = await idToken();
+      lastToken = token;
+      return token;
     },
   });
   return clientSingleton;
 }
 
-/**
- * The current access token, for the one caller that cannot use a header.
- *
- * `EventSource` has no way to set Authorization, so the progress stream takes
- * the token on the query string. Access tokens only: ten minutes and revocable,
- * which is what makes that acceptable. The refresh token is not reachable from
- * here at all, by construction.
- */
 export function accessToken(): string | null {
-  return inMemoryTokens?.accessToken ?? null;
+  return lastToken;
 }
 
 interface SessionState {
@@ -56,7 +54,7 @@ interface SessionState {
   email: string | null;
   ready: boolean;
   setSignedIn: (signedIn: boolean, email?: string | null) => void;
-  hydrate: () => Promise<void>;
+  hydrate: () => void;
   signOut: () => Promise<void>;
 }
 
@@ -64,22 +62,36 @@ export const useSession = create<SessionState>((set) => ({
   signedIn: false,
   email: null,
   ready: false,
+
   setSignedIn: (signedIn, email = null) => {
     set({ signedIn, email });
   },
-  hydrate: async () => {
-    // Recover the session from the cookie. A 401 here is the ordinary
-    // signed-out case, not an error worth surfacing.
-    try {
-      const me = await api().me();
-      set({ signedIn: true, email: me.email, ready: true });
-    } catch {
-      set({ signedIn: false, email: null, ready: true });
-    }
+
+  /**
+   * Subscribe to Firebase rather than fetch anything.
+   *
+   * The listener fires once with the restored user — or null — which is what
+   * makes `ready` meaningful: before it fires, "signed out" and "not yet known"
+   * are indistinguishable, and redirecting on the difference is how a refresh
+   * bounces someone to the login page they were already past.
+   */
+  hydrate: () => {
+    watchAuth((user) => {
+      lastToken = null;
+      set({ signedIn: user !== null, email: user?.email ?? null, ready: true });
+      if (user) {
+        // Materialise the local row on the API side. The dependency creates it
+        // on first sight, so this is just the earliest convenient moment.
+        void api()
+          .me()
+          .catch(() => undefined);
+      }
+    });
   },
+
   signOut: async () => {
-    await api().logout();
-    inMemoryTokens = null;
+    await signOutEverywhere();
+    lastToken = null;
     set({ signedIn: false, email: null });
   },
 }));

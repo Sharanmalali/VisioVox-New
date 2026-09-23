@@ -16,13 +16,13 @@ concern, not ours.
 from __future__ import annotations
 
 import json
-import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
 import pytest
 import pytest_asyncio
+from authstub import identity, sign_in
 from httpx import ASGITransport, AsyncClient
 from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import text
@@ -69,12 +69,14 @@ async def client() -> AsyncIterator[AsyncClient]:
         await dispose_engine()
 
 
-@pytest_asyncio.fixture
-async def auth_headers(client: AsyncClient) -> dict[str, str]:
-    email = f"flow-{uuid.uuid4().hex[:10]}@example.com"
-    resp = await client.post("/v1/auth/register", json={"email": email, "password": PASSWORD})
-    assert resp.status_code == 201, resp.text
-    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+@pytest.fixture
+def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Sign every request as one Firebase identity.
+
+    Registration is Firebase's now (ADR-0016), so a test that needs to be
+    somebody patches verification and lets the dependency create the row.
+    """
+    return sign_in(monkeypatch)
 
 
 @pytest.mark.asyncio
@@ -247,7 +249,7 @@ async def test_oversized_upload_is_rejected(
 
 @pytest.mark.asyncio
 async def test_upload_init_on_another_users_project_is_404(
-    client: AsyncClient, auth_headers: dict[str, str]
+    client: AsyncClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Invariant 4 must hold on the media routes too, not just the CRUD ones."""
     created = await client.post(
@@ -257,11 +259,9 @@ async def test_upload_init_on_another_users_project_is_404(
     )
     pid = created.json()["id"]
 
-    other = await client.post(
-        "/v1/auth/register",
-        json={"email": f"x-{uuid.uuid4().hex[:8]}@example.com", "password": PASSWORD},
-    )
-    intruder = {"Authorization": f"Bearer {other.json()['access_token']}"}
+    # A different identity: verification is re-patched, so subsequent requests
+    # on this client are this second person.
+    intruder = sign_in(monkeypatch, identity())
 
     resp = await client.post(
         f"/v1/projects/{pid}/upload/init",

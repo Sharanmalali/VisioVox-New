@@ -8,7 +8,6 @@ the actual work in service modules. That keeps the ownership check (invariant
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
@@ -19,10 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
-from . import audit, auth_service, authguard, idempotency, problems
+from . import audit, idempotency, problems
 from .config import get_settings
 from .db import dispose_engine
 from .deps import CurrentUser, OwnedProject, SessionDep, SettingsDep
+from .firebase_auth import delete_identity
 from .middleware import (
     CorrelationIdMiddleware,
     GlobalRateLimitMiddleware,
@@ -30,7 +30,7 @@ from .middleware import (
 )
 from .models import Job, JobStage, Project
 from .quotas import QuotaExceededError
-from .ratelimit import RULES, RateLimiter, client_ip, enforce
+from .ratelimit import RateLimiter
 from .redis_client import close_redis, get_redis
 from .routes_exports import router as exports_router
 from .routes_media import limits_router
@@ -41,12 +41,8 @@ from .schemas import (
     ErrorResponse,
     JobResponse,
     JobStageResponse,
-    LoginRequest,
     ProjectListResponse,
     ProjectResponse,
-    RefreshRequest,
-    RegisterRequest,
-    TokenResponse,
     UserResponse,
 )
 
@@ -149,222 +145,43 @@ async def readyz(session: SessionDep) -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 
-# The refresh token lives in an httpOnly cookie, not in a response body the
-# browser would have to store somewhere (docs/28 W4).
-#
-# The access token is still returned in the body and held in memory for its ten
-# minutes. The refresh token is the dangerous one - it mints access tokens for
-# thirty days - and putting it anywhere JavaScript can read turns any XSS on any
-# page into a full, persistent account takeover.
-#
-# Scoped to the auth path so it is not attached to every API request, which
-# keeps it out of logs and away from handlers with no business seeing it.
-REFRESH_COOKIE = "visiovox_refresh"
-REFRESH_COOKIE_PATH = "/v1/auth"
+@auth.delete("/me", status_code=status.HTTP_202_ACCEPTED)
+async def delete_account(
+    user: CurrentUser, session: SessionDep, settings: SettingsDep
+) -> dict[str, str]:
+    """Delete the account, both halves of it.
 
+    The local row cascades to projects, uploads, exports and shares. The
+    Firebase identity has to go separately, or the person signs in again
+    tomorrow and a fresh row is created — an account that looks deleted and is
+    not (ADR-0016 §Consequences).
 
-def _set_refresh_cookie(response: Response, pair: auth_service.TokenPair) -> None:
-    settings = get_settings()
-    response.set_cookie(
-        REFRESH_COOKIE,
-        pair.refresh_token,
-        httponly=True,
-        # Plain HTTP in local development would otherwise drop the cookie
-        # silently, and every reload would look like a broken session.
-        secure=settings.is_production,
-        samesite=settings.refresh_cookie_samesite,
-        path=REFRESH_COOKIE_PATH,
-        max_age=settings.refresh_token_ttl_days * 24 * 3600,
-    )
-
-
-def _clear_refresh_cookie(response: Response) -> None:
-    response.delete_cookie(REFRESH_COOKIE, path=REFRESH_COOKIE_PATH)
-
-
-def _token_response(
-    pair: auth_service.TokenPair, response: Response, *, in_body: bool
-) -> TokenResponse:
-    """Issue the pair.
-
-    `in_body` keeps non-browser clients working: the Python client and the test
-    suite have no cookie jar and legitimately need the token in the response.
-    Browsers get the cookie and nothing else.
+    Firebase first: if it fails, the local row is still here and the operation
+    can be retried. The other order leaves an identity with nothing behind it
+    and no record of what it owned.
     """
-    _set_refresh_cookie(response, pair)
-    return TokenResponse(
-        access_token=pair.access_token,
-        expires_at=pair.access_expires_at,
-        refresh_token=pair.refresh_token if in_body else None,
-        refresh_expires_at=pair.refresh_expires_at,
-    )
+    if user.firebase_uid:
+        delete_identity(user.firebase_uid, settings)
 
-
-def _wants_body_token(request: Request) -> bool:
-    """Whether to echo the refresh token in the response body.
-
-    A browser sends Origin on these requests; a script client does not. It is a
-    heuristic, so it only decides whether to ALSO return what the cookie already
-    carries - a browser is never made less safe by it, it merely receives a
-    field it should ignore.
-    """
-    return request.headers.get("origin") is None
-
-
-@auth.post("/register", status_code=status.HTTP_201_CREATED)
-async def register(
-    body: RegisterRequest,
-    request: Request,
-    response: Response,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> TokenResponse:
-    try:
-        user = await auth_service.register_user(
-            session, body.email, body.password, body.display_name
-        )
-    except auth_service.AuthError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-
-    pair = await auth_service.login(
-        session,
-        body.email,
-        body.password,
-        secret=settings.auth_secret.get_secret_value(),
-        access_ttl_seconds=settings.access_token_ttl_seconds,
-        refresh_ttl_days=settings.refresh_token_ttl_days,
-    )
-    await session.commit()
-    _ = user
-    return _token_response(pair, response, in_body=_wants_body_token(request))
-
-
-@auth.post("/login")
-async def login(
-    body: LoginRequest,
-    request: Request,
-    response: Response,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> TokenResponse:
-    # Keyed on ip+email (docs/11 §10). IP alone lets one address grind through a
-    # password list one account at a time; email alone lets an attacker lock a
-    # known victim out of their own account from anywhere. Both together limit
-    # the pair that actually constitutes a guess.
-    enforce(
-        await _limiter.check(
-            RULES["auth_login"],
-            f"{client_ip(request, settings)}|{body.email.lower()}",
-        ),
-        "Too many sign-in attempts. Wait a few minutes before trying again.",
-    )
-    # Before the password is verified: a locked-out attacker should not get to
-    # consume a bcrypt round per attempt.
-    await authguard.assert_not_backed_off(_redis, settings, body.email)
-
-    ip = client_ip(request, settings)
-    salt = settings.audit_ip_salt.get_secret_value()
-    try:
-        pair = await auth_service.login(
-            session,
-            body.email,
-            body.password,
-            secret=settings.auth_secret.get_secret_value(),
-            access_ttl_seconds=settings.access_token_ttl_seconds,
-            refresh_ttl_days=settings.refresh_token_ttl_days,
-            user_agent=request.headers.get("user-agent"),
-            ip=ip,
-        )
-    except auth_service.AuthError as exc:
-        await authguard.record_failure(_redis, body.email)
-        await audit.record(
-            session,
-            audit.LOGIN_FAILED,
-            outcome="failure",
-            ip=ip,
-            ip_salt=salt,
-            user_agent=request.headers.get("user-agent"),
-            correlation_id=problems.correlation_id(request),
-        )
-        await session.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-
-    await authguard.clear(_redis, body.email)
+    user.deleted_at = dt.datetime.now(dt.UTC)
     await audit.record(
         session,
-        audit.LOGIN_SUCCEEDED,
-        user_id=pair.user_id,
-        ip=ip,
-        ip_salt=salt,
-        user_agent=request.headers.get("user-agent"),
-        correlation_id=problems.correlation_id(request),
+        "account.deleted",
+        user_id=user.id,
+        target_type="user",
+        target_id=user.id,
     )
     await session.commit()
-    return _token_response(pair, response, in_body=_wants_body_token(request))
-
-
-@auth.post("/refresh")
-async def refresh(
-    request: Request,
-    response: Response,
-    session: SessionDep,
-    settings: SettingsDep,
-    body: RefreshRequest | None = None,
-) -> TokenResponse:
-    # An explicitly supplied token wins over the cookie. A browser never sends a
-    # body, so this changes nothing for one: it still refreshes through a value
-    # JavaScript cannot read. But a client that names a token means that token,
-    # and letting the cookie override it silently breaks reuse detection - the
-    # replay would be answered with whatever the jar happened to hold, and a
-    # stolen token would look fine.
-    supplied = (body.refresh_token if body else None) or request.cookies.get(REFRESH_COOKIE)
-    if not supplied:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="no refresh token supplied"
-        )
-    # The token itself is the key: there is no authenticated user yet, and the
-    # token is what a replay attack would hammer. Hashed, because a raw refresh
-    # token must never become a Redis key an operator could read.
-    enforce(
-        await _limiter.check(RULES["auth_refresh"], hashlib.sha256(supplied.encode()).hexdigest())
-    )
-    try:
-        pair = await auth_service.refresh(
-            session,
-            supplied,
-            secret=settings.auth_secret.get_secret_value(),
-            access_ttl_seconds=settings.access_token_ttl_seconds,
-            refresh_ttl_days=settings.refresh_token_ttl_days,
-        )
-    except auth_service.TokenReuseError as exc:
-        # Commit: the revocation must persist even though the request fails.
-        await session.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-    except auth_service.AuthError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
-    await session.commit()
-    return _token_response(pair, response, in_body=_wants_body_token(request))
-
-
-@auth.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    request: Request,
-    response: Response,
-    session: SessionDep,
-    body: RefreshRequest | None = None,
-) -> None:
-    # Same precedence as refresh: an explicitly named token is the one to revoke.
-    supplied = (body.refresh_token if body else None) or request.cookies.get(REFRESH_COOKIE)
-    if supplied:
-        await auth_service.logout(session, supplied)
-        await session.commit()
-    # Cleared even when nothing matched, so a stale cookie cannot survive a
-    # sign-out and keep presenting itself.
-    _clear_refresh_cookie(response)
+    return {"status": "deletion_scheduled", "user_id": user.id}
 
 
 @auth.get("/me")
 async def me(user: CurrentUser) -> UserResponse:
+    """Who the caller is, from their Firebase token.
+
+    The row is created or refreshed by the dependency, so this doubles as the
+    call a freshly signed-in client makes to materialise itself server-side.
+    """
     return UserResponse(
         id=user.id,
         email=user.email,
@@ -375,6 +192,9 @@ async def me(user: CurrentUser) -> UserResponse:
         persist_voiceprints=user.persist_voiceprints,
         created_at=user.created_at,
     )
+
+
+app.include_router(auth)
 
 
 # --------------------------------------------------------------------------
@@ -517,7 +337,6 @@ async def get_job(project: OwnedProject, session: SessionDep) -> JobResponse:
 
 
 app.include_router(health)
-app.include_router(auth)
 app.include_router(projects)
 app.include_router(media_router)
 app.include_router(limits_router)

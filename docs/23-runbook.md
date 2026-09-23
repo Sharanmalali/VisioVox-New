@@ -46,6 +46,44 @@ python -c "import torch; print(torch.cuda.is_available())"   # must print True
 > bottleneck the dataloader before the GPU is saturated. This is the archived roadmap's advice and
 > it is correct.
 
+### Firebase Authentication (one-time, per project)
+
+Identity is Firebase's (ADR-0016). Nothing in this repo can create an account,
+so a fresh clone cannot sign anyone in until this is done once.
+
+1. **Create the project** — <https://console.firebase.google.com> → *Add project*.
+   Disable Google Analytics; it is not needed and adds a consent surface.
+   The free Spark plan covers Authentication outright: no card, no quota we can
+   reach at this scale.
+2. **Enable the providers** — *Build → Authentication → Get started*, then under
+   *Sign-in method* enable:
+   - **Email/Password** (leave *Email link* off).
+   - **Google** — pick a support email; no other setup.
+   - **GitHub** — needs an OAuth app at
+     <https://github.com/settings/developers>. Firebase shows the callback URL
+     to paste as the *Authorization callback URL*; copy GitHub's Client ID and
+     secret back into Firebase.
+3. **Authorised domains** — *Authentication → Settings → Authorized domains*.
+   `localhost` is there by default. **Add the tunnel hostname**, or sign-in
+   fails with `auth/unauthorized-domain` only once deployed, never locally.
+4. **Web config** — *Project settings → General → Your apps → Web*. Copy the
+   four values into `NEXT_PUBLIC_FIREBASE_*` in `.env.local`. These ship inside
+   the bundle and are public by design; the security is in the token signature.
+5. **Service account** — *Project settings → Service accounts → Generate new
+   private key*. Save it as `./secrets/firebase-service-account.json`
+   (gitignored) and set `FIREBASE_CREDENTIALS_FILE` and `FIREBASE_PROJECT_ID`.
+   This one **is** a secret: it can mint tokens for any user in the project.
+
+Verify before assuming it works:
+```bash
+# The API must reject an unsigned request and a token from another project.
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8000/v1/projects          # 401
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer junk' \
+     localhost:8000/v1/projects                                              # 401
+```
+A 500 here means the service account is missing or points at a different
+project — check the API logs rather than the browser.
+
 ### Daily
 ```bash
 make dev        # compose up: postgres, redis, minio, mailhog + web + api + mock worker

@@ -8,9 +8,8 @@ no enumeration risk). All timestamps `TIMESTAMPTZ` in UTC.
 ## 1. ER overview
 
 ```
-  users ──1:N── sessions
+  users (identity mirrored from Firebase — ADR-0016)
     │
-    ├──1:N── refresh_tokens (families, rotation)
     ├──1:N── audit_events
     ├──1:N── api_keys
     └──1:N── projects
@@ -29,11 +28,11 @@ no enumeration risk). All timestamps `TIMESTAMPTZ` in UTC.
 ```sql
 CREATE TABLE users (
   id                TEXT PRIMARY KEY,
+  firebase_uid      TEXT UNIQUE,                -- NULL until first sign-in adopts the row
   email             CITEXT UNIQUE NOT NULL,
   email_verified_at TIMESTAMPTZ,
-  password_hash     TEXT,                       -- NULL for OIDC-only accounts
+  auth_provider     TEXT,                       -- 'password' | 'google.com' | 'github.com'
   display_name      TEXT,
-  avatar_url        TEXT,
   plan              TEXT NOT NULL DEFAULT 'free'
                     CHECK (plan IN ('free','pro','team')),
   data_region       TEXT NOT NULL DEFAULT 'eu'
@@ -42,8 +41,6 @@ CREATE TABLE users (
                     CHECK (retention_days BETWEEN 1 AND 365),
   allow_training_use BOOLEAN NOT NULL DEFAULT FALSE,           -- NFR-PRIV-05
   persist_voiceprints BOOLEAN NOT NULL DEFAULT FALSE,          -- NFR-PRIV-02
-  totp_secret_enc   BYTEA,
-  totp_enabled_at   TIMESTAMPTZ,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   deleted_at        TIMESTAMPTZ
@@ -54,38 +51,28 @@ CREATE INDEX ON users (deleted_at) WHERE deleted_at IS NOT NULL;
 `allow_training_use` and `persist_voiceprints` **default FALSE**. The privacy-preserving behaviour
 requires no action from the user (Charter principle 5).
 
-### sessions & refresh_tokens
-```sql
-CREATE TABLE sessions (
-  id          TEXT PRIMARY KEY,
-  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  user_agent  TEXT,
-  ip_hash     TEXT,                              -- hashed, not raw (privacy)
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  expires_at  TIMESTAMPTZ NOT NULL,
-  revoked_at  TIMESTAMPTZ
-);
+###### identity: no session tables
 
-CREATE TABLE refresh_tokens (
-  id          TEXT PRIMARY KEY,
-  family_id   TEXT NOT NULL,                     -- rotation lineage
-  user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  token_hash  TEXT NOT NULL,                     -- SHA-256; never store the token
-  parent_id   TEXT REFERENCES refresh_tokens(id),
-  used_at     TIMESTAMPTZ,
-  expires_at  TIMESTAMPTZ NOT NULL,
-  revoked_at  TIMESTAMPTZ
-);
-CREATE INDEX ON refresh_tokens (family_id);
-CREATE UNIQUE INDEX ON refresh_tokens (token_hash);
-```
+There is no `sessions` or `refresh_tokens` table. Firebase Authentication issues
+and rotates the credential (ADR-0016), so session lifetime, reuse detection and
+"sign out everywhere" are its mechanisms rather than rows here.
 
-**Reuse detection:** presenting a token whose `used_at` is already set means the token was stolen
-and replayed. Revoke the entire `family_id`. This is the mechanism behind FR-ACC-04.
+What that costs us, recorded so it is not rediscovered as a surprise:
 
-### projects
+- **Reuse detection is gone as a stored property.** The old `refresh_tokens`
+  family lineage let a replayed token revoke its whole family — FR-ACC-04 in its
+  original form. Firebase revokes on its own signals instead, and the API only
+  sees the result, by asking (`FIREBASE_CHECK_REVOKED`) whether a token's
+  session still stands.
+- **Deletion spans two systems.** Erasing a person means deleting the Firebase
+  identity *and* this row. Neither alone is complete, so the deletion path has
+  to do both or say it failed.
+
+`users.firebase_uid` is the join between the two. It is nullable because rows
+predating the migration have no Firebase identity yet; the first sign-in that
+matches on email adopts the existing row rather than orphaning its projects.
+
+ projects
 ```sql
 CREATE TABLE projects (
   id               TEXT PRIMARY KEY,

@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
+from authstub import sign_in
 from httpx import ASGITransport, AsyncClient
 
 from visiovox_api.main import app
@@ -114,15 +115,22 @@ async def test_problem_correlation_id_matches_the_header(client: AsyncClient) ->
 
 
 async def test_validation_failure_reports_fields_without_echoing_input(
-    client: AsyncClient,
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    response = await client.post("/v1/auth/login", json={"email": "not-an-email"})
+    # /auth/login went to Firebase (ADR-0016), and every remaining route with a
+    # body sits behind identity. FastAPI resolves the security dependency before
+    # the body, so an unsigned request is answered 401 and never validated.
+    response = await client.post(
+        "/v1/projects",
+        json={"title": 12345, "rights_attested": "maybe"},
+        headers=sign_in(monkeypatch),
+    )
     assert response.status_code == 422
     body = response.json()
     assert body["code"] == "VALIDATION_FAILED"
     assert any(e["field"] for e in body["errors"])
     # The offending value is deliberately not reflected back.
-    assert "not-an-email" not in response.text
+    assert "maybe" not in response.text
 
 
 async def test_errors_do_not_leak_internals(client: AsyncClient) -> None:

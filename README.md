@@ -93,10 +93,11 @@ git clone https://github.com/shreyassridhar44/VisioVox-New.git ~/projects/visiov
 cd ~/projects/visiovox                  # inside WSL2, NOT /mnt/c — see docs/23 §2
 cp .env.example .env.local
 make dev        # postgres, redis, minio, api, web, mock worker
-make seed       # demo user + fixture projects
 ```
 
-→ http://localhost:3000 · `demo@visiovox.local` / `demo1234`
+→ http://localhost:3000 — sign up with any email. Identity is Firebase's
+(ADR-0016), so there is no seeded demo account and no password stored here;
+`docs/23-runbook.md` §2 has the one-time console setup.
 
 The **mock pipeline** (`PIPELINE_MODE=mock`) returns fixture results, so the entire application —
 upload, player, speaker switching, captions, landing page — runs with **no GPU**.

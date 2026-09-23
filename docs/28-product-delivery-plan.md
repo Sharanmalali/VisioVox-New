@@ -53,7 +53,7 @@ playback engine while the model work ran ahead. The honest state:
 | Playback | `apps/web/src/lib/playback/` — dual engine (HLS + WebAudio), sync, captions, manifest parsing. ~1200 lines, tested, Playwright e2e in `e2e/player.spec.ts` |
 | Auth service | `auth_service.py` — register/login/refresh/logout, rotating refresh tokens, **family reuse detection**, hashed IPs |
 | API control plane | `main.py` — health, auth, projects CRUD; `routes_media.py` — multipart upload init/complete, manifest, **SSE progress** |
-| Data model | `models.py` — `users`, `sessions`, `refresh_tokens`, `projects`, `jobs`, `job_stages`. CHECK constraints, ULID PKs, TIMESTAMPTZ, ms-integer timing |
+| Data model | `models.py` — `users`, `projects`, `jobs`, `job_stages`. CHECK constraints, ULID PKs, TIMESTAMPTZ, ms-integer timing |
 | Storage | `storage.py` — S3/R2 multipart, presigned URLs, MinIO locally |
 | Contracts | `packages/contracts/openapi.json` + `manifest.schema.json`, generated TS client |
 | Local stack | `make dev` → Postgres, Redis, MinIO, MailHog via `infra/docker/compose.yaml` |
@@ -353,7 +353,7 @@ job passes; no hard-coded colour outside the token file.
 - [ ] Email verification (MailHog locally, real provider in prod)
 - [ ] httpOnly + Secure + SameSite cookie handling for refresh; access token in memory only — **never `localStorage`**
 - [ ] Silent refresh, and correct handling of the reuse-detection revocation (the service already revokes the family — the UI must log out cleanly, not loop)
-- [ ] Session list + "sign out everywhere" (the `sessions` table already supports it)
+- [ ] "Sign out everywhere" — Firebase's `revokeRefreshTokens` (ADR-0016); the session *list* went with the `sessions` table and would have to be rebuilt from Firebase, which does not expose one
 - [ ] Settings: retention days, `allow_training_use`, `persist_voiceprints`, delete account + deletion receipt (16)
 - [ ] Route protection, and an auth-aware server-side redirect that does not flash content
 

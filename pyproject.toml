@@ -140,7 +140,7 @@ module = ["torch.*", "torchaudio.*", "speechbrain.*", "pyannote.*",
           "nara_wpe.*", "silero_vad.*", "cv2.*", "onnxruntime.*",
           "pyloudnorm.*", "insightface.*", "torchmetrics.*", "fast_bss_eval.*", "pandas.*",
           "pesq.*", "pystoi.*", "pyroomacoustics.*", "soxr.*", "aioboto3.*", "botocore.*",
-          "celery.*", "sse_starlette.*",
+          "celery.*", "sse_starlette.*", "firebase_admin.*",
           "defusedxml.*"]
 ignore_missing_imports = true
 
