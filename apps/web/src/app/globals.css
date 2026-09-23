@@ -152,25 +152,33 @@ input:focus-visible {
   border-color: var(--accent);
 }
 
-button {
-  padding: 0.6rem 1rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: var(--accent);
-  color: oklch(0.15 0.01 265);
-  font: inherit;
-  font-weight: 550;
-  cursor: pointer;
-  transition: background var(--dur-fast) var(--ease-out);
-}
+/* In @layer base, not unlayered. Tailwind emits its utilities inside a cascade
+ * layer, and unlayered CSS beats every layered rule whatever its specificity -
+ * so as a bare rule this silently overrode bg-bg-surface, bg-transparent and
+ * the rest, painting all four Button variants as primary accent. Layered, it
+ * still styles a plain <button> and loses to any utility, which is what makes
+ * the variants mean anything. */
+@layer base {
+  button {
+    padding: 0.6rem 1rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    background: var(--accent);
+    color: oklch(0.15 0.01 265);
+    font: inherit;
+    font-weight: 550;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
 
-button:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
+  button:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
 
-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+  button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
 }
 
 .muted {
