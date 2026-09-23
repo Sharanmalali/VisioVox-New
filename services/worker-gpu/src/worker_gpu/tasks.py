@@ -23,8 +23,9 @@ from celery import Celery
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from visiovox_api.config import get_settings
+from visiovox_api.config import Settings, get_settings
 from visiovox_api.models import Export, Job, Project, UsageCounter, new_id
+from visiovox_api.storage import StorageError
 
 from .real_pipeline import PipelineError, run_pipeline
 from .stagerunner import StageRunner, publish
@@ -92,13 +93,33 @@ def _meter_gpu_seconds(session: Any, user_id: str, seconds: float) -> None:
     )
 
 
-def _publish_artifacts(artifact_dir: Path, project: Project, manifest: dict[str, Any]) -> None:
-    """Move the packaged files where the player can fetch them.
+def _s3_client(settings: Settings) -> Any:
+    """A plain sync S3 client. The async ObjectStore is the API's; this is Celery."""
+    import boto3  # type: ignore[import-untyped]
+    from botocore.config import Config
 
-    Copied onto the media volume under the project's own prefix rather than
-    uploaded through the API: the bytes are already on the same host as the
-    object store, and round-tripping them through a presign would double the
-    I/O for no benefit (ADR-0012 keeps the API out of the data path either way).
+    return boto3.client(
+        "s3",
+        endpoint_url=settings.s3_endpoint_url or None,
+        region_name=settings.s3_region,
+        aws_access_key_id=settings.s3_access_key_id,
+        # .get_secret_value(): SecretStr stringifies to '**********', which
+        # boto3 will happily sign with and the store then rejects as 403.
+        aws_secret_access_key=settings.s3_secret_access_key.get_secret_value(),
+        config=Config(
+            signature_version="s3v4",
+            s3={"addressing_style": "path" if settings.s3_force_path_style else "auto"},
+        ),
+    )
+
+
+def _publish_artifacts(artifact_dir: Path, project: Project, manifest: dict[str, Any]) -> None:
+    """Put the packaged files where the player can actually fetch them.
+
+    Into the object store under the project's prefix, because that is what
+    PUBLIC_MEDIA_BASE_URL addresses and what the API presigns. A local copy is
+    kept alongside it: that is the retention and cleanup path, and it is what a
+    re-render reads rather than downloading its own output again.
     """
     destination = Path(settings.media_root) / "projects" / project.id
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -106,8 +127,42 @@ def _publish_artifacts(artifact_dir: Path, project: Project, manifest: dict[str,
         shutil.rmtree(destination)
     shutil.copytree(artifact_dir, destination)
 
+    _upload_artifacts(destination, project.id)
+
     base = f"{settings.public_media_base_url.rstrip('/')}/projects/{project.id}/"
     _rewrite_urls(manifest, base)
+
+
+def _upload_artifacts(directory: Path, project_id: str) -> None:
+    """Upload every packaged file to `projects/<id>/` in the bucket."""
+    client = _s3_client(settings)
+    for path in sorted(directory.rglob("*")):
+        if not path.is_file():
+            continue
+        key = f"projects/{project_id}/{path.relative_to(directory).as_posix()}"
+        # Content type matters: a browser will not play an .m4a served as
+        # application/octet-stream, and the store has no reason to guess.
+        content_type = _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
+        client.upload_file(
+            str(path),
+            settings.s3_bucket,
+            key,
+            ExtraArgs={"ContentType": content_type},
+        )
+    logger.info("published artifacts for %s to the object store", project_id)
+
+
+_CONTENT_TYPES = {
+    ".m4a": "audio/mp4",
+    ".mp4": "video/mp4",
+    ".wav": "audio/wav",
+    ".vtt": "text/vtt",
+    ".json": "application/json",
+    ".m3u8": "application/vnd.apple.mpegurl",
+    ".ts": "video/mp2t",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+}
 
 
 def _rewrite_urls(node: Any, base: str) -> None:
@@ -135,6 +190,29 @@ def _rewrite_urls(node: Any, base: str) -> None:
             _rewrite_urls(item, base)
 
 
+def _fetch_source(settings: Settings, key: str, job_id: str) -> Path:
+    """Download the uploaded object into this job's scratch directory.
+
+    Through the S3 API, deliberately. The object store's on-disk layout is its
+    own business - MinIO keeps an object as a directory of parts, and a hosted
+    store keeps it somewhere this process cannot see at all - so reading it as a
+    file path only ever worked by accident.
+    """
+    if not key:
+        raise StorageError("the project has no source key")
+
+    scratch = Path(settings.media_work_dir) / job_id
+    scratch.mkdir(parents=True, exist_ok=True)
+    # Keep the original suffix: ffprobe and the sandbox both take a hint from it.
+    target = scratch / (Path(key).name or "source")
+
+    _s3_client(settings).download_file(settings.s3_bucket, key, str(target))
+
+    if not target.is_file() or target.stat().st_size == 0:
+        raise StorageError(f"downloaded source is empty: {key}")
+    return target
+
+
 @celery_app.task(name="visiovox.run_real_pipeline", bind=True, max_retries=2)
 def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
     """Execute the real pipeline for one job."""
@@ -154,11 +232,10 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
         publish(settings.redis_url, job_id, {"status": "running", "progress": 0, "stage": None})
 
         runner = StageRunner(session, job, settings.redis_url)
-        source = (
-            Path(settings.media_root) / "minio" / settings.s3_bucket / (project.source_key or "")
-        )
-
-        if not source.is_file():
+        try:
+            source = _fetch_source(settings, project.source_key or "", job_id)
+        except Exception as exc:
+            logger.warning("could not fetch the source object: %s", exc)
             job.status = "failed"
             job.error_code = "SOURCE_MISSING"
             job.error_detail = "the uploaded file could not be found"

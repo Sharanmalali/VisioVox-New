@@ -208,7 +208,12 @@ def run_pipeline(
         # ---- S2b: faces -------------------------------------------------------
         video_analysis = None
         with runner.stage(BY_NAME["S2b_video"], gpu=True) as report:
-            if media.video_mp4 is None:
+            if settings.force_audio_only:
+                # Recorded distinctly from no_video_track: a manifest produced
+                # this way must never be mistaken for one where the visual path
+                # was attempted and failed.
+                report.warn("audio_only_forced")
+            elif media.video_mp4 is None:
                 report.warn("no_video_track")
             else:
                 try:

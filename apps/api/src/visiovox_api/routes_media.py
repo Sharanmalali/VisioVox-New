@@ -32,7 +32,7 @@ from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
 from . import audit, problems, quotas, uploads
-from .config import get_settings
+from .config import Settings, get_settings
 from .deps import CurrentUser, OwnedProject, OwnedProjectSSE, SessionDep, SettingsDep
 from .models import Job, UploadSession
 from .ratelimit import RULES, RateLimiter, client_ip, enforce
@@ -398,6 +398,42 @@ def _enqueue(job_id: str, mode: str) -> None:
         logger.warning("could not enqueue job %s (mode=%s)", job_id, mode, exc_info=True)
 
 
+async def sign_manifest(manifest: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """Replace every stored media URL with a presigned one.
+
+    The worker writes plain `PUBLIC_MEDIA_BASE_URL/...` links. The bucket has no
+    anonymous access (ADR-0012), so those are 403s in a browser; presigning here
+    turns them into links that work and genuinely expire.
+
+    Walks the whole structure rather than naming fields, because the manifest
+    grows: a track, a caption file and a thumbnail added later would each
+    otherwise need remembering here, and the failure would be a 403 in the
+    player rather than anything that looks like a missed edit.
+    """
+    base = settings.public_media_base_url.rstrip("/") + "/"
+    store = ObjectStore(settings)
+    cache: dict[str, str] = {}
+
+    async def walk(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {k: await walk(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [await walk(v) for v in node]
+        if isinstance(node, str) and node.startswith(base):
+            key = node[len(base) :]
+            if key not in cache:
+                cache[key] = await store.presign_get(key)
+            return cache[key]
+        return node
+
+    signed: dict[str, Any] = await walk(manifest)
+    # Now true rather than aspirational: the TTL starts at this request.
+    signed["signed_until"] = (
+        dt.datetime.now(dt.UTC) + dt.timedelta(seconds=settings.signed_url_ttl_seconds)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return signed
+
+
 @router.get("/{project_id}/manifest")
 async def get_manifest(project: OwnedProject) -> dict[str, Any]:
     """The payload the player depends on (docs/11 §4)."""
@@ -406,12 +442,7 @@ async def get_manifest(project: OwnedProject) -> dict[str, Any]:
             status_code=status.HTTP_409_CONFLICT,
             detail=f"project is {project.status}; no manifest yet",
         )
-    manifest: dict[str, Any] = dict(project.manifest)
-    # Re-stamp expiry so a client that fetched early still knows when to refetch.
-    manifest["signed_until"] = (
-        dt.datetime.now(dt.UTC) + dt.timedelta(seconds=get_settings().signed_url_ttl_seconds)
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return manifest
+    return await sign_manifest(dict(project.manifest), get_settings())
 
 
 @router.get("/{project_id}/events")

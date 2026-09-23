@@ -84,6 +84,12 @@ class Settings(BaseSettings):
 
     # --- pipeline ---
     pipeline_mode: PipelineMode = "mock"
+    # Run the extractor on its audio-only route even when the upload has a
+    # video track. There is no separate audio-only checkpoint: one model
+    # carries a modality gate, and this withholds the visual cue from it.
+    # Costs separation quality on overlapping speech - that is the project's
+    # whole premise - so it is off unless deliberately set.
+    force_audio_only: bool = False
     extractor_version: str = "seave-0.1.0"
     # The trained SEAVE checkpoint the GPU worker loads. Pinned by path rather
     # than discovered, so a job records which weights produced it.
