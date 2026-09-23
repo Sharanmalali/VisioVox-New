@@ -298,7 +298,7 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
         # Invariant 8: some speakers recovered is a partial success, not a
         # failure, and the distinction is visible to the user.
         runner.finish(
-            status="partial" if output.warnings else "succeeded",
+            status="partial" if _outcome_degraded(output, settings) else "succeeded",
             stage="S9_package",
         )
 
@@ -308,6 +308,30 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
             "speakers": output.speaker_count,
             "gpu_seconds": round(output.gpu_seconds, 1),
         }
+
+
+def _outcome_degraded(output: Any, settings: Settings) -> bool:
+    """Did the result actually suffer, or did we just run in a chosen modality?
+
+    Running audio-only produces warnings by definition: there are no face
+    tracks, so nothing can bind to one. Those describe the configuration, not a
+    problem with the recording, and treating them as degradation would mark
+    every audio-only job partial - which both cries wolf and camouflages the
+    case the flag exists for.
+    """
+    speakers = output.manifest.get("speakers", []) if output.manifest else []
+    # A speaker the extractor could not produce a track for is the real thing.
+    if any(sp.get("extraction_ok") is False for sp in speakers):
+        return True
+
+    if not settings.force_audio_only:
+        return bool(output.warnings)
+
+    expected = {"audio_only_forced", "no_face_tracks_to_bind"}
+    return any(
+        w not in expected and not (w.startswith("speaker_") and w.endswith("_no_face_track"))
+        for w in output.warnings
+    )
 
 
 def enqueue(job_id: str) -> None:
