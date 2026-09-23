@@ -3,7 +3,11 @@
 #
 #   ./infra/local/deploy.sh            # build, migrate, start
 #   ./infra/local/deploy.sh --tunnel   # ...and bring up cloudflared
+#   ./infra/local/deploy.sh --local    # ...and publish 3000/8000 on loopback
 #   ./infra/local/deploy.sh --rollback # previous images, same data
+#
+# Without --tunnel or --local nothing is reachable: the production stack
+# publishes no host ports, so the tunnel is normally the only way in.
 #
 # Refuses rather than guesses: a missing secret, a root-owned media volume or a
 # failed migration stops the deploy instead of producing a half-running stack
@@ -11,9 +15,15 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
-COMPOSE=(docker compose -f infra/docker/compose.prod.yaml --project-directory .)
+FILES=(-f infra/docker/compose.prod.yaml)
 PROFILES=()
-[[ "${1:-}" == "--tunnel" ]] && PROFILES=(--profile tunnel)
+case "${1:-}" in
+  --tunnel) PROFILES=(--profile tunnel) ;;
+  # Host bindings for the two services a browser talks to, so the production
+  # images can be exercised before a domain exists. Loopback only.
+  --local) FILES+=(-f infra/docker/compose.prod.local.yaml) ;;
+esac
+COMPOSE=(docker compose "${FILES[@]}" --project-directory .)
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31mERROR\033[0m %s\n' "$*" >&2; exit 1; }
@@ -64,9 +74,14 @@ sa=secrets/firebase-service-account.json
 
 # Firebase rejects sign-in from a host that is not on its allow list, and
 # nothing here can read that list - so state it every deploy rather than let it
-# be discovered by someone who cannot log in.
-app_host=$(grep -E '^NEXT_PUBLIC_APP_URL=' .env | cut -d= -f2- | sed -E 's#^https?://##; s#/.*##')
-say "Firebase authorized domains must include: ${app_host}"
+# be discovered by someone who cannot log in. localhost is on that list by
+# default, which is what makes --local work with no console changes.
+app_host=$(grep -E '^NEXT_PUBLIC_APP_URL=' .env | cut -d= -f2- | sed -E 's#^https?://##; s#(:[0-9]+)?/.*##; s#:[0-9]+$##')
+if [[ "$app_host" == "localhost" || "$app_host" == "127.0.0.1" ]]; then
+  say "Firebase authorized domains: localhost is allowed by default - nothing to add"
+else
+  say "Firebase authorized domains must include: ${app_host}"
+fi
 
 MEDIA_ROOT=$(grep -E '^MEDIA_ROOT=' .env | cut -d= -f2- || echo /srv/media)
 MEDIA_ROOT=${MEDIA_ROOT:-/srv/media}
@@ -136,4 +151,9 @@ systemctl is-active --quiet visiovox-worker-gpu \
   || echo "  NOT running - sudo systemctl start visiovox-worker-gpu"
 
 say "Deployed"
+case "${1:-}" in
+  --tunnel) say "Reachable through the tunnel at ${app_host}" ;;
+  --local)  say "Reachable at http://localhost:3000 - loopback only, not from another machine" ;;
+  *)        say "No ingress: this stack publishes no host ports. Use --tunnel or --local." ;;
+esac
 "${COMPOSE[@]}" ps --format 'table {{.Name}}\t{{.Status}}'

@@ -1,0 +1,20 @@
+# Overlay: reach the production stack from this machine, without a tunnel.
+#
+#   ./infra/local/deploy.sh --local
+#
+# compose.prod.yaml publishes nothing to the host on purpose - the tunnel is the
+# only ingress, so a misconfigured firewall cannot expose Postgres to the
+# internet. That is the right default and this file does not change it; it adds
+# host bindings for the two services a browser talks to, so the production
+# images can be exercised before a domain exists.
+#
+# Bound to 127.0.0.1 explicitly. Plain "3000:3000" listens on every interface,
+# which on a laptop on college wifi means everyone on that network.
+services:
+  web:
+    ports:
+      - '127.0.0.1:3000:3000'
+
+  api:
+    ports:
+      - '127.0.0.1:8000:8000'

@@ -46,6 +46,43 @@ python -c "import torch; print(torch.cuda.is_available())"   # must print True
 > bottleneck the dataloader before the GPU is saturated. This is the archived roadmap's advice and
 > it is correct.
 
+### Running without a tunnel
+
+The tunnel only makes the stack reachable from the internet. Nothing else
+depends on it, so the domain can be left until last.
+
+| | Stack | Reachable from | Use it for |
+|---|---|---|---|
+| `make dev` | development images, hot reload | `localhost:3000` | building and iterating |
+| `deploy.sh --local` | production images | `127.0.0.1:3000` | proving the real build works |
+| `deploy.sh --tunnel` | production images | your domain | the actual deployment |
+
+`deploy.sh` with no flag starts the full production stack and publishes **no
+host ports** — `compose.prod.yaml` uses `expose:` throughout, so the tunnel is
+the only ingress and a misconfigured firewall cannot put Postgres on the
+internet. `--local` overlays loopback bindings for `web` and `api`
+(`compose.prod.local.yaml`); it binds `127.0.0.1` explicitly, because a plain
+`3000:3000` listens on every interface, which on college wifi means everyone on
+that network.
+
+**Firebase needs no console changes for either local mode.** `localhost` is on
+the authorized-domains list by default, and the GitHub provider's callback URL
+points at `<project>.firebaseapp.com`, not at your host — so email/password,
+Google and GitHub sign-in all work before a domain exists.
+
+Set the public URLs to match whichever you are running:
+
+```bash
+# .env, for --local
+PUBLIC_API_URL=http://localhost:8000
+PUBLIC_MEDIA_BASE_URL=http://localhost:8000/media
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+These are inlined at build time, so switching between local and the domain is a
+rebuild, not a restart. `deploy.sh` rebuilds every run, so changing `.env` and
+re-running is all it takes.
+
 ### Domain and tunnel (one-time)
 
 The workstation is the server (D5). It has no public IP and no open inbound
