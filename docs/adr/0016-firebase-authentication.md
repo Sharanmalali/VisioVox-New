@@ -36,7 +36,7 @@ The API verifies Firebase ID tokens and does nothing else about authentication:
 | Sessions | `sessions` table | Firebase |
 | Refresh + rotation | `refresh_tokens`, family reuse detection | Firebase |
 | Token lifetime | 10 min access, 30 d refresh | 1 h ID token, renewed by the SDK |
-| Social sign-in | none | Google, GitHub |
+| Social sign-in | none | Google (GitHub available, not enabled) |
 | Password reset | none | Firebase |
 | User directory | `users` | Firebase, mirrored into `users` |
 

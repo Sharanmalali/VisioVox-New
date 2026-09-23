@@ -66,9 +66,9 @@ internet. `--local` overlays loopback bindings for `web` and `api`
 that network.
 
 **Firebase needs no console changes for either local mode.** `localhost` is on
-the authorized-domains list by default, and the GitHub provider's callback URL
-points at `<project>.firebaseapp.com`, not at your host — so email/password,
-Google and GitHub sign-in all work before a domain exists.
+the authorized-domains list by default, and Google's OAuth flow is brokered by
+`<project>.firebaseapp.com` rather than by your host — so both email/password
+and Google sign-in work before a domain exists.
 
 Set the public URLs to match whichever you are running:
 
@@ -142,10 +142,13 @@ so a fresh clone cannot sign anyone in until this is done once.
    *Sign-in method* enable:
    - **Email/Password** (leave *Email link* off).
    - **Google** — pick a support email; no other setup.
-   - **GitHub** — needs an OAuth app at
-     <https://github.com/settings/developers>. Firebase shows the callback URL
-     to paste as the *Authorization callback URL*; copy GitHub's Client ID and
-     secret back into Firebase.
+
+   GitHub is **deliberately not enabled**. It is the only provider that needs a
+   second OAuth app registered elsewhere, and two working providers cover every
+   user. Enabling it later is a console change plus restoring the button — it
+   was removed from the UI, because a button for a disabled provider opens a
+   popup and fails with `auth/operation-not-allowed`, which reads as the site
+   being broken.
 3. **Authorised domains** — *Authentication → Settings → Authorized domains*.
    `localhost` is there by default. **Add the tunnel hostname**, or sign-in
    fails with `auth/unauthorized-domain` only once deployed, never locally.

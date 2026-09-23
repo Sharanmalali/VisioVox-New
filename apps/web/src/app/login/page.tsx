@@ -18,7 +18,6 @@ import {
   registerWithEmail,
   sendReset,
   signInWithEmail,
-  signInWithGithub,
   signInWithGoogle,
 } from '@/lib/firebase';
 import { useSession } from '@/lib/store';
@@ -120,15 +119,6 @@ export default function LoginPage() {
             onClick={() => void run('google', signInWithGoogle)}
           >
             Continue with Google
-          </Button>
-          <Button
-            variant="secondary"
-            full
-            loading={busy === 'github'}
-            disabled={busy !== null}
-            onClick={() => void run('github', signInWithGithub)}
-          >
-            Continue with GitHub
           </Button>
         </div>
 

@@ -22,7 +22,6 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
-  GithubAuthProvider,
   browserSessionPersistence,
   createUserWithEmailAndPassword,
   getAuth,
@@ -95,12 +94,6 @@ export async function signInWithGoogle(): Promise<User> {
   // and no idea which one has their recordings.
   provider.setCustomParameters({ prompt: 'select_account' });
   const { user } = await signInWithPopup(auth, provider);
-  return user;
-}
-
-export async function signInWithGithub(): Promise<User> {
-  const auth = await configured();
-  const { user } = await signInWithPopup(auth, new GithubAuthProvider());
   return user;
 }
 
