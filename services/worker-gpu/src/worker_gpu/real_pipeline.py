@@ -158,7 +158,31 @@ def _load_extractor(settings: Settings) -> Any:
     path = Path(settings.extractor_checkpoint).expanduser()
     if not path.is_file():
         raise PipelineError(f"extractor checkpoint not found at {path}; set EXTRACTOR_CHECKPOINT")
+
+    # Say which weights are serving. Otherwise the only way to answer "is this
+    # the model we think it is" is to hash the file and compare by hand, and a
+    # checkpoint named `best.pt` is a moving target across training runs.
+    _describe_checkpoint(path)
     return SeaveExtractor.load(path, device=settings.torch_device)
+
+
+def _describe_checkpoint(path: Path) -> None:
+    """Log the step and validation score the checkpoint records about itself."""
+    try:
+        import torch
+
+        meta = torch.load(path, map_location="cpu", weights_only=False)
+        step = meta.get("step") if isinstance(meta, dict) else None
+        extra = (meta.get("extra") or {}) if isinstance(meta, dict) else {}
+        score = extra.get("val_si_sdri")
+        logger.info(
+            "extractor: %s (step %s, val_si_sdri %s)",
+            path,
+            step,
+            f"{score:+.2f} dB" if isinstance(score, (int, float)) else "not recorded",
+        )
+    except Exception as exc:
+        logger.info("extractor: %s (metadata unreadable: %s)", path, exc)
 
 
 def run_pipeline(
