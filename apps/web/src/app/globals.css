@@ -5,6 +5,18 @@
  * properties the hand-written CSS uses means there is exactly one palette:
  * a utility class and a component class cannot drift apart. */
 @theme inline {
+  /* The console, in the vocabulary the components are written in. */
+  --color-void: var(--void);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-edge: var(--edge);
+  --color-acid: var(--acid);
+  --color-acid-hot: var(--acid-hot);
+  --color-crimson: var(--crimson);
+  --color-crimson-hot: var(--crimson-hot);
+  --color-chalk: var(--chalk);
+  --color-dust: var(--dust);
+
   --color-bg-base: var(--bg-base);
   --color-bg-surface: var(--bg-surface);
   --color-bg-elevated: var(--bg-elevated);
@@ -34,17 +46,23 @@
   --radius-md: var(--radius-md);
   --radius-lg: var(--radius-lg);
 
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-mono);
   --font-mono: var(--font-mono);
   --font-display: var(--font-display);
 }
 
 /* Aliases kept deliberately. The player shipped against these names and is
  * ~1200 tested lines; repointing them at the token palette migrates the colours
- * without touching a single component. */
+ * without touching a single component.
+ *
+ * --panel is NOT redeclared here. It is a real token now, and this file is
+ * imported after tokens.css, so `--panel: var(--bg-surface)` would win the
+ * cascade and pair with `--bg-surface: var(--panel)` to form a cycle. A cyclic
+ * custom property is invalid at computed-value time, which resolves to
+ * transparent rather than failing loudly - every slab painted see-through and
+ * the decorative backing slabs showed through the terminal. */
 :root {
   --bg: var(--bg-base);
-  --panel: var(--bg-surface);
   --border: var(--border-subtle);
   --text: var(--fg-primary);
   --muted: var(--fg-muted);
@@ -65,10 +83,40 @@ body {
   margin: 0;
   background: var(--bg-base);
   color: var(--fg-primary);
-  font-family: var(--font-sans);
+  font-family: var(--font-mono);
   font-size: 15px;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+}
+
+/* The hairline grid the rack is mounted on. On <body> rather than a wrapper so
+ * it runs edge to edge under everything, including a short page. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: var(--grid-size) var(--grid-size);
+}
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* A label etched into a panel: small, wide-tracked, shouting quietly. */
+.etch {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--fg-muted);
 }
 
 /* Timecodes, byte counts and metrics must not jitter as digits change. */
@@ -89,27 +137,46 @@ a {
 }
 
 /* A visible focus ring everywhere, not only where someone remembered it. */
+/* Three pixels and offset, because a two-pixel ring disappears against a
+ * four-pixel black edge. */
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 3px;
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 0;
+}
+
+::selection {
+  background: var(--acid);
+  color: var(--edge);
 }
 
 .header {
   display: flex;
   gap: 1.5rem;
   align-items: center;
-  padding: 0.9rem 1.25rem;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 0.85rem 1.25rem;
+  background: var(--panel);
+  border-bottom: var(--stroke) solid var(--edge);
 }
 
 .brand {
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  color: var(--chalk);
 }
 
-nav a:hover {
-  color: var(--accent);
+.header nav a {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--fg-muted);
+}
+
+.header nav a:hover {
+  color: var(--acid);
 }
 
 .main {
@@ -118,10 +185,14 @@ nav a:hover {
   padding: 2rem 1.25rem;
 }
 
+/* A slab: bolted down with a black edge, standing off the void by its own
+ * hard offset. No blur anywhere - blur would make it a shadow, and the point
+ * is that it is an extrusion. */
 .panel {
   background: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border: var(--stroke) solid var(--edge);
+  border-radius: 0;
+  box-shadow: var(--depth-md);
   padding: 1.25rem;
 }
 
@@ -131,25 +202,32 @@ nav a:hover {
 
 label {
   display: block;
-  font-size: 0.85rem;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
   color: var(--fg-muted);
-  margin-bottom: 0.3rem;
+  margin-bottom: 0.5rem;
 }
 
+/* Recessed rather than raised, so the eye reads it as somewhere to put
+ * something in. The inset offset is the key's extrusion turned inside out. */
 input[type='email'],
 input[type='password'],
 input[type='text'] {
   width: 100%;
-  padding: 0.6rem 0.7rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
+  padding: 0.75rem 1rem;
+  border-radius: 0;
+  box-shadow: var(--depth-inset);
+  border: var(--stroke) solid var(--edge);
   background: var(--bg-inset);
   color: var(--fg-primary);
   font: inherit;
 }
 
 input:focus-visible {
-  border-color: var(--accent);
+  border-color: var(--acid);
+  outline-offset: 0;
 }
 
 /* In @layer base, not unlayered. Tailwind emits its utilities inside a cascade
@@ -159,25 +237,46 @@ input:focus-visible {
  * still styles a plain <button> and loses to any utility, which is what makes
  * the variants mean anything. */
 @layer base {
+  /* A key. Uppercase mono on a coloured face, four-pixel black edge, standing
+   * off its surface - and on press it travels exactly its own offset so it
+   * lands flush, which is the whole illusion.
+   *
+   * In @layer base, not unlayered: Tailwind emits utilities inside a cascade
+   * layer, and unlayered CSS beats every layered rule whatever its
+   * specificity, so as a bare rule this silently overrode every variant. */
   button {
-    padding: 0.6rem 1rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid transparent;
-    background: var(--accent);
-    color: oklch(0.15 0.01 265);
-    font: inherit;
-    font-weight: 550;
+    padding: 0.75rem 1.25rem;
+    border: var(--stroke) solid var(--edge);
+    border-radius: 0;
+    background: var(--acid);
+    color: var(--edge);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
     cursor: pointer;
-    transition: background var(--dur-fast) var(--ease-out);
+    box-shadow: var(--depth-md);
+    transition:
+      transform var(--dur-press) ease-out,
+      box-shadow var(--dur-press) ease-out,
+      background-color var(--dur-press) ease-out;
   }
 
   button:hover:not(:disabled) {
-    background: var(--accent-hover);
+    background: var(--acid-hot);
+  }
+
+  /* Travels its own offset, so it sits flush with the panel. */
+  button:active:not(:disabled) {
+    transform: translate(var(--lift-md), var(--lift-md));
+    box-shadow: var(--depth-none);
   }
 
   button:disabled {
-    opacity: 0.55;
+    opacity: 0.4;
     cursor: not-allowed;
+    transform: none;
   }
 }
 
@@ -439,5 +538,50 @@ th {
   .bar > span,
   .rail-item {
     transition: none;
+  }
+}
+
+/* ------------------------------------------------------------- terminal --
+   Utilities the console uses that no token can express on its own. */
+
+/* The scanline wash, for the telemetry log only - the one place the hardware
+   metaphor is literal. Anywhere else it is just noise over text. */
+.scanlines {
+  position: relative;
+}
+
+.scanlines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, var(--scanline) 0 1px, transparent 1px 3px);
+}
+
+.cursor-blink {
+  animation: blink 1.05s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+.ticker {
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* Functionality is unchanged without motion; only the motion goes. */
+@media (prefers-reduced-motion: reduce) {
+  .cursor-blink,
+  .ticker {
+    animation: none;
   }
 }

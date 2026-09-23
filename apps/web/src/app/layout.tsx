@@ -1,6 +1,25 @@
 import type { Metadata } from 'next';
+import { Space_Mono, Syne } from 'next/font/google';
 import type { ReactNode } from 'react';
 import './globals.css';
+
+/* Self-hosted by next/font: no request to fonts.gstatic.com at runtime, so the
+ * console cannot render in a fallback face on a slow connection. Space Mono is
+ * the voice of the interface and Syne is the display face; both are loaded
+ * with `swap` so text is readable before the face arrives. */
+const mono = Space_Mono({
+  subsets: ['latin'],
+  weight: ['400', '700'],
+  display: 'swap',
+  variable: '--font-mono-face',
+});
+
+const display = Syne({
+  subsets: ['latin'],
+  weight: ['600', '700', '800'],
+  display: 'swap',
+  variable: '--font-display-face',
+});
 
 export const metadata: Metadata = {
   title: 'VisioVox',
@@ -9,16 +28,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${mono.variable} ${display.variable}`}>
       <body>
         <header className="header">
           <a href="/" className="brand">
             VisioVox
           </a>
-          <nav className="flex gap-4 text-sm">
+          <nav className="flex gap-5">
             <a href="/upload">Upload</a>
             <a href="/projects">Projects</a>
           </nav>
+          {/* The unit marking, the way a rack-mounted box carries one. */}
+          <span className="etch ml-auto hidden sm:block">VX·01</span>
         </header>
         <main className="main">{children}</main>
       </body>

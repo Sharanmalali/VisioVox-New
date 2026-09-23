@@ -1,14 +1,18 @@
 /**
- * Component primitives (docs/14-design-system.md).
+ * Component primitives — the console.
  *
- * Every colour here is a token. Nothing takes a raw hex or an arbitrary
- * Tailwind palette value, because the contrast gate only checks the token file
- * — a stray `text-blue-400` is invisible to it and would ship unverified.
+ * Everything tactile here is built from one idea: a hard black offset with no
+ * blur, which the element falls into when pressed. Blur would make it a
+ * shadow; the absence of blur makes it an extrusion. A pressed element travels
+ * exactly its own offset, so it lands flush with the surface behind it.
  *
- * These live on both surfaces (docs/28 §D1). The expressive props — `glow`,
- * `glass` — are opt-in and belong on landing, auth, upload and waiting. Inside
- * the player they are a bug: there the user is judging audio quality, and
- * decoration competes with the signal.
+ * Every colour is a token. Nothing takes a raw hex or a stock Tailwind palette
+ * value, because the contrast gate only checks the token file — a stray
+ * `text-blue-400` is invisible to it and would ship unverified.
+ *
+ * The names are the vocabulary of the object: a Slab is bolted down, a Key is
+ * pressed, a Field is recessed. `Card` and `Button` remain as aliases so the
+ * rest of the app did not have to be rewritten to adopt this.
  */
 'use client';
 
@@ -24,107 +28,50 @@ export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ');
 }
 
-// ------------------------------------------------------------------ Button --
+// -------------------------------------------------------------------- depth --
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
-type ButtonSize = 'sm' | 'md' | 'lg';
+/** Hard offsets, zero blur. The whole design rests on these three values. */
+export const DEPTH = {
+  sm: 'shadow-[4px_4px_0_0_var(--edge)]',
+  md: 'shadow-[7px_7px_0_0_var(--edge)]',
+  lg: 'shadow-[12px_12px_0_0_var(--edge)]',
+} as const;
 
-const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
-  primary: 'bg-accent text-[oklch(0.15_0.01_265)] hover:bg-accent-hover border-transparent',
-  secondary:
-    'bg-bg-surface text-fg-primary border-border-strong hover:border-accent hover:text-accent',
-  ghost:
-    'bg-transparent text-fg-secondary border-transparent hover:text-fg-primary hover:bg-bg-surface',
-  danger: 'bg-danger text-[oklch(0.98_0_0)] border-transparent hover:opacity-90',
-};
+/** Travel equal to the offset, so the element lands flush rather than sinking
+ *  into the panel or hovering above it. */
+const PRESS = {
+  sm:
+    'active:translate-x-[4px] active:translate-y-[4px] active:shadow-[0_0_0_0_var(--edge)] ' +
+    'transition-[transform,box-shadow,background-color] duration-75 ease-out',
+  md:
+    'active:translate-x-[7px] active:translate-y-[7px] active:shadow-[0_0_0_0_var(--edge)] ' +
+    'transition-[transform,box-shadow,background-color] duration-75 ease-out',
+  lg:
+    'active:translate-x-[12px] active:translate-y-[12px] active:shadow-[0_0_0_0_var(--edge)] ' +
+    'transition-[transform,box-shadow,background-color] duration-75 ease-out',
+} as const;
 
-const BUTTON_SIZES: Record<ButtonSize, string> = {
-  sm: 'text-sm px-3 py-1.5 gap-1.5',
-  md: 'text-[0.95rem] px-4 py-2.5 gap-2',
-  lg: 'text-base px-6 py-3 gap-2.5',
-};
+type Depth = keyof typeof DEPTH;
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariant;
-  size?: ButtonSize;
-  /** Shows a spinner and blocks interaction without changing the button's width. */
-  loading?: boolean;
-  /** Expressive surfaces only. */
-  glow?: boolean;
-  full?: boolean;
-}
+// --------------------------------------------------------------------- Slab --
 
-export function Button({
-  variant = 'primary',
-  size = 'md',
-  loading = false,
-  glow = false,
-  full = false,
-  disabled,
-  children,
-  className,
-  ...rest
-}: ButtonProps) {
-  return (
-    <button
-      {...rest}
-      disabled={disabled ?? loading}
-      // Tells assistive tech the control is working, which a spinner alone does not.
-      aria-busy={loading || undefined}
-      className={cx(
-        'inline-flex items-center justify-center rounded-[var(--radius-sm)] border font-medium',
-        'transition-[background,border-color,color,box-shadow] duration-(--dur-fast) ease-(--ease-out)',
-        'disabled:opacity-55 disabled:cursor-not-allowed',
-        BUTTON_VARIANTS[variant],
-        BUTTON_SIZES[size],
-        full && 'w-full',
-        glow && 'shadow-[var(--glow-accent)]',
-        className,
-      )}
-    >
-      {loading && <Spinner size={size === 'lg' ? 18 : 14} />}
-      {children}
-    </button>
-  );
-}
-
-// ----------------------------------------------------------------- Spinner --
-
-export function Spinner({ size = 16, label }: { size?: number; label?: string }) {
-  return (
-    <span
-      role={label ? 'status' : undefined}
-      aria-label={label}
-      aria-hidden={label ? undefined : true}
-      // Reduced motion: the ring stops rotating but stays visible, so the
-      // "busy" meaning survives (NFR-A11Y-04).
-      className="inline-block shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent motion-reduce:animate-none"
-      style={{ width: size, height: size }}
-    />
-  );
-}
-
-// -------------------------------------------------------------------- Card --
-
-export function Card({
-  children,
-  className,
-  glass = false,
+/** A panel bolted to the rack. The structural unit of every screen. */
+export function Slab({
   as: Tag = 'div',
+  depth = 'md',
+  className,
+  children,
 }: {
-  children: ReactNode;
+  as?: 'div' | 'section' | 'article' | 'form' | 'aside';
+  depth?: Depth | 'none';
   className?: string;
-  /** Expressive surfaces only: translucent over a mesh background. */
-  glass?: boolean;
-  as?: 'div' | 'section' | 'article' | 'form';
+  children: ReactNode;
 }) {
   return (
     <Tag
       className={cx(
-        'rounded-[var(--radius-lg)] border p-5',
-        glass
-          ? 'bg-[var(--glass-bg)] border-[var(--glass-border)] backdrop-blur-[var(--glass-blur)]'
-          : 'bg-bg-surface border-border-subtle',
+        'border-4 border-edge bg-panel',
+        depth === 'none' ? '' : DEPTH[depth],
         className,
       )}
     >
@@ -133,82 +80,221 @@ export function Card({
   );
 }
 
-// ------------------------------------------------------------------- Field --
+/** The strip across the top of a slab that says what the module is. */
+export function SlabHead({
+  label,
+  tone = 'acid',
+  right,
+}: {
+  label: string;
+  tone?: 'acid' | 'crimson' | 'bone';
+  right?: ReactNode;
+}) {
+  const bg = { acid: 'bg-acid', crimson: 'bg-crimson', bone: 'bg-chalk' }[tone];
+  const fg = tone === 'crimson' ? 'text-white' : 'text-edge';
+  return (
+    <div
+      className={cx(
+        'flex items-center justify-between gap-3 border-b-4 border-edge px-5 py-2.5',
+        bg,
+        fg,
+      )}
+    >
+      <span className="font-mono text-[11px] font-bold uppercase tracking-[0.22em]">{label}</span>
+      {right !== undefined && <span className="font-mono text-[11px] font-bold">{right}</span>}
+    </div>
+  );
+}
+
+/** Kept so existing pages render as slabs without being rewritten. */
+export function Card({
+  children,
+  className,
+  as = 'div',
+}: {
+  children: ReactNode;
+  className?: string;
+  /** Accepted and ignored — there is no glass in this world. */
+  glass?: boolean;
+  as?: 'div' | 'section' | 'article' | 'form';
+}) {
+  return (
+    <Slab as={as} className={cx('p-5', className)}>
+      {children}
+    </Slab>
+  );
+}
+
+// ---------------------------------------------------------------------- Key --
+
+export type KeyTone = 'acid' | 'crimson' | 'bone' | 'ghost';
+type KeySize = 'sm' | 'md' | 'lg';
+
+const TONE_FACE: Record<KeyTone, string> = {
+  acid: 'bg-acid text-edge hover:bg-acid-hot',
+  crimson: 'bg-crimson text-white hover:bg-crimson-hot',
+  bone: 'bg-chalk text-edge hover:bg-white',
+  ghost: 'bg-raised text-chalk hover:bg-[color-mix(in_srgb,var(--raised)_70%,var(--chalk))]',
+};
+
+const KEY_SIZE: Record<KeySize, string> = {
+  sm: 'px-3 py-1.5 text-[11px]',
+  md: 'px-5 py-3 text-sm',
+  lg: 'px-7 py-4 text-base',
+};
+
+export interface KeyProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
+  tone?: KeyTone;
+  size?: KeySize;
+  full?: boolean;
+  /** Blocks interaction and shows the label given in `busyLabel`. */
+  loading?: boolean;
+  busyLabel?: string | undefined;
+  children: ReactNode;
+}
+
+export function Key({
+  tone = 'acid',
+  size = 'md',
+  full = false,
+  loading = false,
+  busyLabel,
+  disabled,
+  className,
+  children,
+  ...rest
+}: KeyProps) {
+  const locked = disabled === true || loading;
+  const depth = size === 'sm' ? 'sm' : 'md';
+  return (
+    <button
+      {...rest}
+      disabled={locked}
+      aria-busy={loading || undefined}
+      className={cx(
+        'inline-flex items-center justify-center gap-2 border-4 border-edge',
+        'font-mono font-bold uppercase tracking-[0.12em]',
+        DEPTH[depth],
+        PRESS[depth],
+        TONE_FACE[tone],
+        KEY_SIZE[size],
+        full && 'w-full',
+        locked && 'cursor-not-allowed opacity-40 active:translate-x-0 active:translate-y-0',
+        className,
+      )}
+    >
+      {loading && <Spinner size={size === 'lg' ? 16 : 13} />}
+      {loading && busyLabel !== undefined ? busyLabel : children}
+    </button>
+  );
+}
+
+/** Kept so existing pages keep working; maps the old variants onto key tones. */
+export interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  size?: KeySize;
+  loading?: boolean;
+  /** Accepted and ignored — depth replaced glow. */
+  glow?: boolean;
+  full?: boolean;
+  children: ReactNode;
+}
+
+export function Button({ variant = 'primary', glow: _glow, ...rest }: ButtonProps) {
+  const tone: KeyTone = (
+    { primary: 'acid', secondary: 'ghost', ghost: 'ghost', danger: 'crimson' } as const
+  )[variant];
+  return <Key tone={tone} {...rest} />;
+}
+
+// ------------------------------------------------------------------ Spinner --
+
+export function Spinner({ size = 16, label }: { size?: number; label?: string }) {
+  return (
+    <span
+      role={label === undefined ? 'presentation' : 'status'}
+      aria-label={label}
+      className="inline-block shrink-0 animate-spin border-2 border-current border-t-transparent"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+// -------------------------------------------------------------------- Field --
 
 export interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
-  hint?: string;
-  error?: string;
+  // Explicitly `| undefined`: the project runs exactOptionalPropertyTypes,
+  // so a caller passing a conditional value must be allowed to pass
+  // undefined rather than having to spread the prop in conditionally.
+  hint?: string | undefined;
+  error?: string | undefined;
 }
 
-/**
- * Label, control, hint and error wired together by id.
- *
- * `aria-describedby` and `aria-invalid` are set here rather than at each call
- * site: a form built from these cannot accidentally ship an error message that
- * a screen reader never announces.
- */
+/** Recessed, the inverse of a key: the eye reads it as somewhere to put
+ *  something in rather than something to press. */
 export function Field({ label, hint, error, id, className, ...rest }: FieldProps) {
-  const auto = useId();
-  const fieldId = id ?? auto;
-  const hintId = `${fieldId}-hint`;
-  const errorId = `${fieldId}-error`;
-
+  const generated = useId();
+  const fieldId = id ?? generated;
+  const noteId = `${fieldId}-note`;
   return (
-    <div className={cx('flex flex-col gap-1.5', className)}>
-      <label htmlFor={fieldId} className="text-sm text-fg-secondary">
+    <div className="flex flex-col gap-2">
+      <label htmlFor={fieldId} className="etch">
         {label}
       </label>
       <input
         {...rest}
         id={fieldId}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={cx(hint && hintId, error && errorId) || undefined}
+        aria-invalid={error !== undefined || undefined}
+        aria-describedby={error !== undefined || hint !== undefined ? noteId : undefined}
         className={cx(
-          'w-full rounded-[var(--radius-sm)] border bg-bg-inset px-3 py-2.5 text-fg-primary',
-          'placeholder:text-fg-muted',
-          'transition-colors duration-(--dur-fast)',
-          error ? 'border-danger' : 'border-border-strong focus:border-accent',
+          'w-full border-4 bg-void px-4 py-3 text-sm text-chalk',
+          'shadow-[var(--depth-inset)] placeholder:text-dust/50',
+          error !== undefined ? 'border-crimson' : 'border-edge focus:border-acid',
+          className,
         )}
       />
-      {hint && !error && (
-        <p id={hintId} className="text-xs text-fg-muted">
-          {hint}
-        </p>
-      )}
-      {error && (
-        <p id={errorId} className="text-xs text-danger">
+      {error !== undefined ? (
+        <span id={noteId} className="font-mono text-[11px] text-crimson">
           {error}
-        </p>
-      )}
+        </span>
+      ) : hint !== undefined ? (
+        <span id={noteId} className="font-mono text-[11px] text-dust">
+          {hint}
+        </span>
+      ) : null}
     </div>
   );
 }
 
 export interface TextAreaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label: string;
-  hint?: string;
+  hint?: string | undefined;
 }
 
 export function TextArea({ label, hint, id, className, ...rest }: TextAreaProps) {
-  const auto = useId();
-  const fieldId = id ?? auto;
+  const generated = useId();
+  const fieldId = id ?? generated;
   return (
-    <div className={cx('flex flex-col gap-1.5', className)}>
-      <label htmlFor={fieldId} className="text-sm text-fg-secondary">
+    <div className="flex flex-col gap-2">
+      <label htmlFor={fieldId} className="etch">
         {label}
       </label>
       <textarea
         {...rest}
         id={fieldId}
-        className="w-full rounded-[var(--radius-sm)] border border-border-strong bg-bg-inset px-3 py-2.5 text-fg-primary focus:border-accent"
+        className={cx(
+          'w-full border-4 border-edge bg-void px-4 py-3 text-sm text-chalk',
+          'shadow-[var(--depth-inset)] focus:border-acid',
+          className,
+        )}
       />
-      {hint && <p className="text-xs text-fg-muted">{hint}</p>}
+      {hint !== undefined && <span className="font-mono text-[11px] text-dust">{hint}</span>}
     </div>
   );
 }
 
-// ---------------------------------------------------------------- Progress --
+// ----------------------------------------------------------------- Progress --
 
 export function Progress({
   value,
@@ -222,44 +308,52 @@ export function Progress({
   label?: string;
   tone?: 'accent' | 'success' | 'warning';
 }) {
-  // Narrowed to a number here, so the determinate branch never has to assert
-  // that it is one.
   const pct = typeof value === 'number' ? Math.min(100, Math.max(0, (value / max) * 100)) : null;
-  const bg = { accent: 'bg-accent', success: 'bg-success', warning: 'bg-warning' }[tone];
+  const face = { accent: 'bg-acid', success: 'bg-acid', warning: 'bg-[var(--warning)]' }[tone];
 
   return (
-    <div
-      role="progressbar"
-      aria-valuenow={pct === null ? undefined : Math.round(pct)}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-label={label}
-      className="h-2 w-full overflow-hidden rounded-full border border-border-subtle bg-bg-inset"
-    >
-      {pct === null ? (
-        // Indeterminate is honest about not knowing. A bar that creeps to 99%
-        // and stops is worse than one that admits it cannot estimate.
-        <div className={cx('h-full w-1/3 animate-pulse motion-reduce:animate-none', bg)} />
-      ) : (
-        <div
-          className={cx('h-full transition-[width] duration-(--dur-normal) ease-(--ease-out)', bg)}
-          style={{ width: `${pct.toFixed(2)}%` }}
-        />
+    <div className="flex flex-col gap-2">
+      {(label !== undefined || pct !== null) && (
+        <div className="flex items-baseline justify-between gap-3">
+          {label !== undefined && <span className="etch">{label}</span>}
+          {pct !== null && (
+            <span className="font-mono text-[11px] font-bold tabular-nums text-acid">
+              {Math.round(pct)}%
+            </span>
+          )}
+        </div>
       )}
+      <div
+        role="progressbar"
+        aria-valuenow={pct === null ? undefined : Math.round(pct)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={label}
+        className="h-5 w-full border-4 border-edge bg-void shadow-[var(--depth-inset)]"
+      >
+        {pct === null ? (
+          <div className={cx('ticker h-full w-1/3', face)} />
+        ) : (
+          <div
+            className={cx('h-full transition-[width] duration-300 ease-out', face)}
+            style={{ width: `${String(pct)}%` }}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-// ------------------------------------------------------------------- Badge --
+// ------------------------------------------------------------ Badge / Alert --
 
-type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
+export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
 
-const TONES: Record<Tone, string> = {
-  neutral: 'text-fg-muted border-border-subtle',
-  accent: 'text-accent border-accent',
-  success: 'text-success border-success',
-  warning: 'text-warning border-warning',
-  danger: 'text-danger border-danger',
+const TONE_EDGE: Record<Tone, string> = {
+  neutral: 'bg-raised text-dust',
+  accent: 'bg-acid text-edge',
+  success: 'bg-acid text-edge',
+  warning: 'bg-[var(--warning)] text-edge',
+  danger: 'bg-crimson text-white',
 };
 
 export function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) {
@@ -267,17 +361,16 @@ export function Badge({ children, tone = 'neutral' }: { children: ReactNode; ton
     <span
       className={cx(
         // self-start matters: inside a flex column the default is stretch, and
-        // a pill that spans the page reads as a broken banner rather than a tag.
-        'inline-flex w-fit self-start items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs',
-        TONES[tone],
+        // a tag that spans the page reads as a broken banner.
+        'inline-flex w-fit shrink-0 self-start items-center gap-1.5 border-2 border-edge px-2 py-0.5',
+        'font-mono text-[10px] font-bold uppercase tracking-[0.14em]',
+        TONE_EDGE[tone],
       )}
     >
       {children}
     </span>
   );
 }
-
-// ------------------------------------------------------------------- Alert --
 
 export function Alert({
   tone = 'danger',
@@ -288,57 +381,53 @@ export function Alert({
   title?: string;
   children: ReactNode;
 }) {
+  const stripe = {
+    neutral: 'bg-dust',
+    accent: 'bg-acid',
+    success: 'bg-acid',
+    warning: 'bg-[var(--warning)]',
+    danger: 'bg-crimson',
+  }[tone];
+
   return (
     <div
       // assertive for errors, polite otherwise: an error the user must act on
       // should interrupt, a status update should not.
       role={tone === 'danger' ? 'alert' : 'status'}
-      className={cx(
-        'rounded-[var(--radius-md)] border px-4 py-3 text-sm',
-        TONES[tone],
-        'bg-bg-surface',
-      )}
+      className={cx('flex border-4 border-edge bg-panel', DEPTH.sm)}
     >
-      {title && <p className="mb-1 font-medium">{title}</p>}
-      <div className="text-fg-secondary">{children}</div>
+      {/* The tone is a solid bar, not a tinted background: at this contrast a
+          wash would be either invisible or unreadable. */}
+      <span className={cx('w-2.5 shrink-0', stripe)} aria-hidden="true" />
+      <div className="px-4 py-3 text-sm">
+        {title !== undefined && <p className="etch mb-1 text-chalk">{title}</p>}
+        <div className="text-dust">{children}</div>
+      </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------- Skeleton --
+// --------------------------------------------------------------- Skeleton --
 
 export function Skeleton({ className }: { className?: string }) {
   return (
-    <div
-      aria-hidden
-      className={cx(
-        'animate-pulse rounded-[var(--radius-sm)] bg-bg-elevated motion-reduce:animate-none',
-        className,
-      )}
-    />
+    <div aria-hidden="true" className={cx('ticker border-4 border-edge bg-raised', className)} />
   );
 }
 
-// -------------------------------------------------------------- SpeakerDot --
+// ------------------------------------------------------------- SpeakerDot --
 
-/**
- * A speaker's identity colour.
- *
- * Always paired with its label by the caller: colour is never the sole
- * identifier (NFR-A11Y-06), which also matters at four speakers where magenta
- * and azure converge under deuteranopia.
- */
+/** Speaker identity. A square, because nothing here is round — but the hue is
+ *  the same one the player and the transcript use, and colour is never the sole
+ *  identifier (NFR-A11Y-06). */
 export function SpeakerDot({ index, size = 10 }: { index: number; size?: number }) {
-  // A tuple rather than a plain array: indexing an array yields
-  // `string | undefined` under noUncheckedIndexedAccess, and a speaker colour
-  // that can be undefined is a colour that can silently vanish.
-  const tokens = ['--spk-1', '--spk-2', '--spk-3', '--spk-4'] as const;
-  const token = tokens[index % tokens.length] ?? '--spk-mixed';
+  const slot = ((index - 1) % 4) + 1;
+  const hue = `var(--spk-${String(slot)})`;
   return (
     <span
-      aria-hidden
-      className="inline-block shrink-0 rounded-full"
-      style={{ width: size, height: size, background: `var(${token})` }}
+      aria-hidden="true"
+      className="inline-block shrink-0 border-2 border-edge"
+      style={{ width: size, height: size, background: hue }}
     />
   );
 }

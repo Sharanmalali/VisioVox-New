@@ -69,7 +69,7 @@ export default function UploadPage() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void hydrate();
+    hydrate();
   }, [hydrate]);
 
   useEffect(() => {

@@ -51,6 +51,20 @@ function oklchToSrgb(L, C, hDeg) {
   return lin.map((v) => Math.min(1, Math.max(0, v)));
 }
 
+/** `#rrggbb` (or `#rgb`) to LINEAR sRGB, matching what oklchToSrgb returns.
+ *  The hex in a stylesheet is gamma-encoded, so it needs the inverse transfer
+ *  function before it can be compared with anything. */
+function hexToLinear(hex) {
+  let h = hex.slice(1);
+  if (h.length === 3)
+    h = h
+      .split('')
+      .map((c) => c + c)
+      .join('');
+  const channels = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+  return channels.map((c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+}
+
 /** WCAG relative luminance, from LINEAR sRGB (no second transfer function). */
 function luminance([r, g, b]) {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
@@ -65,15 +79,56 @@ function contrast(fg, bg) {
 
 // ----------------------------------------------------------------- parse --
 
-/** Extract `--name: oklch(L C H ...)` pairs from one CSS block. */
+/**
+ * Extract every colour token from one CSS block.
+ *
+ * Handles the three forms the palette actually uses: `oklch(L C H)`, `#rrggbb`,
+ * and `var(--other)` aliases. Aliases are resolved after the whole block is
+ * read, so declaration order does not matter and a chain (`--accent:
+ * var(--acid)`) resolves in as many passes as it needs.
+ */
 function parseBlock(css) {
-  const out = new Map();
-  const re = /--([a-z0-9-]+)\s*:\s*oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/gi;
+  const literal = new Map();
+  const alias = new Map();
+
+  const decl = /--([a-z0-9-]+)\s*:\s*([^;]+);/gi;
   let m;
-  while ((m = re.exec(css)) !== null) {
-    out.set(m[1], oklchToSrgb(Number(m[2]), Number(m[3]), Number(m[4])));
+  while ((m = decl.exec(css)) !== null) {
+    const name = m[1];
+    const value = m[2].trim();
+
+    const oklch = value.match(/^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/i);
+    if (oklch) {
+      literal.set(name, oklchToSrgb(Number(oklch[1]), Number(oklch[2]), Number(oklch[3])));
+      continue;
+    }
+
+    const hex = value.match(/^#([0-9a-f]{3}|[0-9a-f]{6})\b/i);
+    if (hex) {
+      literal.set(name, hexToLinear(`#${hex[1]}`));
+      continue;
+    }
+
+    const ref = value.match(/^var\(\s*--([a-z0-9-]+)\s*\)$/i);
+    if (ref) alias.set(name, ref[1]);
   }
-  return out;
+
+  // Resolve aliases. Bounded by the number of aliases, so a cycle terminates
+  // rather than hanging, and whatever is left unresolved is simply absent —
+  // which the pair loop reports as MISSING.
+  for (let pass = 0; pass < alias.size + 1 && alias.size; pass += 1) {
+    let progressed = false;
+    for (const [name, target] of [...alias]) {
+      if (literal.has(target)) {
+        literal.set(name, literal.get(target));
+        alias.delete(name);
+        progressed = true;
+      }
+    }
+    if (!progressed) break;
+  }
+
+  return literal;
 }
 
 function blockFor(css, selector) {
@@ -120,22 +175,20 @@ const PAIRS = [
   ['spk-4', 'bg-inset', AA_LARGE, 'speaker 4 on the timeline bed'],
 
   ['border-strong', 'bg-base', AA_LARGE, 'strong border'],
+  // --edge is NOT checked, deliberately. The black extrusion edge is meant to
+  // be invisible against the void; depth is carried by the hard offset under
+  // an element, not by a legible outline. Requiring contrast there would
+  // require deleting the design.
 ];
 
 // ------------------------------------------------------------------ run --
 
 const css = readFileSync(TOKENS, 'utf8');
 
-const themes = [
-  ['dark', parseBlock(blockFor(css, ':root {'))],
-  [
-    'light',
-    new Map([
-      ...parseBlock(blockFor(css, ':root {')),
-      ...parseBlock(blockFor(css, "[data-theme='light']")),
-    ]),
-  ],
-];
+// One theme. The interface commits to a single dark console; a light
+// neo-brutalist terminal would be a different product, so there is no
+// [data-theme='light'] block to check.
+const themes = [['dark', parseBlock(blockFor(css, ':root {'))]];
 
 let failures = 0;
 let checked = 0;
@@ -173,4 +226,4 @@ if (failures > 0) {
   process.exit(1);
 }
 
-console.log(`contrast gate: ${checked} pairings pass in both themes`);
+console.log(`contrast gate: ${checked} pairings pass`);

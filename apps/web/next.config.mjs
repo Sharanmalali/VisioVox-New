@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // `next build` and `next dev` both default to .next, so building while
+  // the dev server is live replaces the chunks it is still serving - which
+  // surfaces as a webpack MODULE_NOT_FOUND that survives a reload and points
+  // nowhere near the cause. `make web-build` sets this to build elsewhere.
+  distDir: process.env.NEXT_DIST_DIR ?? '.next',
   // Traced output: only the files actually reached are shipped, which is a
   // fraction of node_modules and what the runtime image copies.
   //

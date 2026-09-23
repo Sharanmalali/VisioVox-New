@@ -84,8 +84,9 @@ train-status:  ## Show C1 training progress: step, pace, validation curve, ETA
 	@$(UV) run python scripts/train_status.py
 
 web-build:  ## Production build of the Next.js app (also typechecks and lints it)
-	$(PNPM) --filter @visiovox/web run build
+	@# Into .next-build, so this never clobbers a running `next dev`.
+	NEXT_DIST_DIR=.next-build $(PNPM) --filter @visiovox/web run build
 
 clean:  ## Remove build and cache artefacts
-	rm -rf .mypy_cache .pytest_cache .ruff_cache apps/web/.next
+	rm -rf .mypy_cache .pytest_cache .ruff_cache apps/web/.next apps/web/.next-build
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +

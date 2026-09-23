@@ -50,6 +50,7 @@ node_modules/
 
 # Next.js generated
 .next/
+.next-build/
 next-env.d.ts
 .pnpm-store/
 .next/
