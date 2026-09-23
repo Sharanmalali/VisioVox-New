@@ -24,6 +24,20 @@ COPY apps/web apps/web
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
+# Firebase web config (ADR-0016). Public by design - these identify the
+# project, they do not authorise anything; the security is in the token
+# signature. Inlined here for the same reason as the API URL: set them at
+# start-up instead and the bundle ships with empty strings, so the login page
+# reports Firebase as unconfigured with no way to fix it short of a rebuild.
+ARG NEXT_PUBLIC_FIREBASE_API_KEY=
+ARG NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+ARG NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+ARG NEXT_PUBLIC_FIREBASE_APP_ID=
+ENV NEXT_PUBLIC_FIREBASE_API_KEY=${NEXT_PUBLIC_FIREBASE_API_KEY} \
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN} \
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID=${NEXT_PUBLIC_FIREBASE_PROJECT_ID} \
+    NEXT_PUBLIC_FIREBASE_APP_ID=${NEXT_PUBLIC_FIREBASE_APP_ID}
+
 RUN pnpm --filter @visiovox/ts-client build \
  && pnpm --filter @visiovox/web build
 

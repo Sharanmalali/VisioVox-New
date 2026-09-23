@@ -25,12 +25,17 @@ say "Preflight"
 
 required=(
   POSTGRES_PASSWORD
-  AUTH_SECRET
   S3_ACCESS_KEY_ID
   S3_SECRET_ACCESS_KEY
   PUBLIC_API_URL
   PUBLIC_MEDIA_BASE_URL
+  NEXT_PUBLIC_APP_URL
   AUDIT_IP_SALT
+  FIREBASE_PROJECT_ID
+  NEXT_PUBLIC_FIREBASE_API_KEY
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID
+  NEXT_PUBLIC_FIREBASE_APP_ID
 )
 missing=()
 for key in "${required[@]}"; do
@@ -38,14 +43,30 @@ for key in "${required[@]}"; do
 done
 [[ ${#missing[@]} -eq 0 ]] || die "missing in .env: ${missing[*]}"
 
-# The dev defaults are in the repo, so they are the ones most likely to reach
+# The dev defaults ship in this repo, so they are the ones most likely to reach
 # production by accident.
-if grep -qE '^AUTH_SECRET=dev-only' .env; then
-  die "AUTH_SECRET is still the development default. Generate one: openssl rand -hex 32"
-fi
 if grep -qE '^AUDIT_IP_SALT=dev-only' .env; then
   die "AUDIT_IP_SALT is still the development default. Generate one: openssl rand -hex 32"
 fi
+
+# Same reasoning for the placeholder host, which fails in a more confusing way:
+# the stack comes up healthy, and then every sign-in is rejected as an
+# unauthorized domain.
+if grep -qE '^(PUBLIC_API_URL|PUBLIC_MEDIA_BASE_URL|NEXT_PUBLIC_APP_URL)=.*visiovox\.example\.com' .env; then
+  die "the public URLs are still visiovox.example.com. Set your real hostname."
+fi
+
+# Firebase verifies every authenticated request. Without this key the API starts
+# and then answers 500 to all of them, which reads as a broken deploy rather
+# than a missing file.
+sa=secrets/firebase-service-account.json
+[[ -f "$sa" ]] || die "$sa is missing. Firebase console -> Project settings -> Service accounts -> Generate new private key."
+
+# Firebase rejects sign-in from a host that is not on its allow list, and
+# nothing here can read that list - so state it every deploy rather than let it
+# be discovered by someone who cannot log in.
+app_host=$(grep -E '^NEXT_PUBLIC_APP_URL=' .env | cut -d= -f2- | sed -E 's#^https?://##; s#/.*##')
+say "Firebase authorized domains must include: ${app_host}"
 
 MEDIA_ROOT=$(grep -E '^MEDIA_ROOT=' .env | cut -d= -f2- || echo /srv/media)
 MEDIA_ROOT=${MEDIA_ROOT:-/srv/media}

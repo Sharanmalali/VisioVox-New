@@ -46,6 +46,52 @@ python -c "import torch; print(torch.cuda.is_available())"   # must print True
 > bottleneck the dataloader before the GPU is saturated. This is the archived roadmap's advice and
 > it is correct.
 
+### Domain and tunnel (one-time)
+
+The workstation is the server (D5). It has no public IP and no open inbound
+port; a Cloudflare tunnel dials **out** from the machine and Cloudflare routes a
+hostname back down that connection. Free, and it works behind CGNAT.
+
+One hostname serves app, API and media. That is deliberate: no CORS to
+configure, one certificate, and one entry in Firebase's authorized domains.
+
+**1. Get a domain — £0.** A named tunnel needs a zone on your Cloudflare
+account, so a `trycloudflare.com` quick tunnel will not do: its hostname is
+regenerated on every restart, and both Firebase's allow list and
+`NEXT_PUBLIC_APP_URL` (inlined at build time) would need changing each time.
+
+- [GitHub Student Developer Pack](https://education.github.com/pack) — verify
+  with the college address; includes a free Namecheap `.me` for a year.
+  Same-day.
+- `eu.org` is the fallback: free and permanent, but approval takes weeks.
+
+**2. Point it at Cloudflare.** Add the domain as a site on a free Cloudflare
+account, then set the two nameservers Cloudflare gives you at the registrar.
+Propagation is usually minutes; the dashboard says *Active* when it is done.
+
+**3. Create the tunnel.** Zero Trust → Networks → Tunnels → *Create a tunnel* →
+*Cloudflared*. Add a public hostname:
+
+| Field | Value |
+|---|---|
+| Subdomain | *(blank, for the apex)* |
+| Domain | `yourdomain.me` |
+| Service | `HTTP` → `web:3000` |
+
+`web:3000` is the compose service name — cloudflared runs inside the same
+network, so it resolves. Copy the token.
+
+**4. Fill in `.env`.** Every `visiovox.example.com` becomes your hostname;
+`CLOUDFLARE_TUNNEL_TOKEN` gets the token. `deploy.sh` refuses to start while
+the placeholder is still there.
+
+**5. Add the hostname to Firebase** — *Authentication → Settings → Authorized
+domains*. Skipping this is the failure that looks like a bug: the stack comes
+up healthy and every sign-in is rejected with `auth/unauthorized-domain`.
+`deploy.sh` prints the hostname it expects on the list each run.
+
+**6. Deploy.** `./infra/local/deploy.sh --tunnel`.
+
 ### Firebase Authentication (one-time, per project)
 
 Identity is Firebase's (ADR-0016). Nothing in this repo can create an account,
