@@ -76,7 +76,7 @@ export default function LoginPage() {
   // already signed in back to this page on every refresh.
   useEffect(() => {
     if (ready && signedIn) {
-      router.replace('/projects');
+      router.replace('/studio');
     }
   }, [ready, signedIn, router]);
 
@@ -98,7 +98,7 @@ export default function LoginPage() {
     setNotice(null);
     try {
       await fn();
-      router.push('/projects');
+      router.push('/studio');
     } catch (err) {
       // A closed popup is a decision, not a failure, so `explain` returns an
       // empty string for it and nothing is shown.

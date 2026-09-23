@@ -26,21 +26,13 @@ export const metadata: Metadata = {
   description: 'Hear one speaker at a time.',
 };
 
+/* No chrome here. The console draws its own fascia, and a global header
+ * would sit above it as a second bar from the old design. Pages that want
+ * navigation render it themselves. */
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${mono.variable} ${display.variable}`}>
       <body>
-        <header className="header">
-          <a href="/" className="brand">
-            VisioVox
-          </a>
-          <nav className="flex gap-5">
-            <a href="/upload">Upload</a>
-            <a href="/projects">Projects</a>
-          </nav>
-          {/* The unit marking, the way a rack-mounted box carries one. */}
-          <span className="etch ml-auto hidden sm:block">VX·01</span>
-        </header>
         <main className="main">{children}</main>
       </body>
     </html>
