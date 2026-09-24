@@ -59,7 +59,7 @@ while true; do
     --steps "$STEPS" --val-every 500 \
     --out "$OUT" \
     --drop-audio-cue 0.5 --drop-visual 0.40 \
-    --confusable-prob 0.5 --tir -8.0 3.0 \
+    --confusable-prob 0.5 --tir -8.0 3.0 --librimix-ratio 0.5 \
     --resume \
     >> "$LOG" 2>&1 < /dev/null &
   disown
