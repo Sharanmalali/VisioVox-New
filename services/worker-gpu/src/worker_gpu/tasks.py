@@ -27,7 +27,7 @@ from visiovox_api.config import Settings, get_settings
 from visiovox_api.models import Export, Job, Project, UsageCounter, new_id
 from visiovox_api.storage import StorageError
 
-from .real_pipeline import PipelineError, run_pipeline
+from .real_pipeline import INFORMATIONAL_WARNINGS, PipelineError, run_pipeline
 from .stagerunner import StageRunner, publish
 
 logger = logging.getLogger(__name__)
@@ -291,6 +291,12 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
         project.overlap_ratio = output.overlap_ratio
         project.difficulty = output.difficulty
         project.warnings = output.warnings
+        # The export ladder is derived from the source's height; without it
+        # every project offers audio only, video or not.
+        video = output.manifest.get("video") if output.manifest else None
+        if isinstance(video, dict):
+            project.width = video.get("width") or project.width
+            project.height = video.get("height") or project.height
         project.status = "ready"
 
         _meter_gpu_seconds(session, project.user_id, output.gpu_seconds)
@@ -311,27 +317,18 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
 
 
 def _outcome_degraded(output: Any, settings: Settings) -> bool:
-    """Did the result actually suffer, or did we just run in a chosen modality?
+    """Did the result actually suffer, or did the pipeline merely note something?
 
-    Running audio-only produces warnings by definition: there are no face
-    tracks, so nothing can bind to one. Those describe the configuration, not a
-    problem with the recording, and treating them as degradation would mark
-    every audio-only job partial - which both cries wolf and camouflages the
-    case the flag exists for.
+    A face that never spoke being dropped, or one person's face tracks being
+    merged across a camera cut, describe the recording rather than a problem
+    with the result. Counting them would mark ordinary jobs partial - which
+    both cries wolf and camouflages the jobs where something did go wrong.
     """
     speakers = output.manifest.get("speakers", []) if output.manifest else []
     # A speaker the extractor could not produce a track for is the real thing.
     if any(sp.get("extraction_ok") is False for sp in speakers):
         return True
-
-    if not settings.force_audio_only:
-        return bool(output.warnings)
-
-    expected = {"audio_only_forced", "no_face_tracks_to_bind"}
-    return any(
-        w not in expected and not (w.startswith("speaker_") and w.endswith("_no_face_track"))
-        for w in output.warnings
-    )
+    return any(w not in INFORMATIONAL_WARNINGS for w in output.warnings)
 
 
 def enqueue(job_id: str) -> None:

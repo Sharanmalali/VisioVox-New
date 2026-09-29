@@ -31,7 +31,3 @@ os.environ.setdefault("CELERY_RESULT_BACKEND", "redis://localhost:6379/14")
 # checkpoint and minutes per job. Pinning it here means a machine configured for
 # real inference still runs the tests the way CI does.
 os.environ["PIPELINE_MODE"] = "mock"
-
-# Likewise the modality: a machine set up to demonstrate audio-only separation
-# should not silently change what the tests cover.
-os.environ["FORCE_AUDIO_ONLY"] = "false"

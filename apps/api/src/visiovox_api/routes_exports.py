@@ -64,7 +64,7 @@ async def export_options(project: OwnedProject) -> list[RenditionOption]:
     Derived from the source's real height, so the UI lists what exists rather
     than a fixed menu that sometimes lies.
     """
-    from pipeline.s10_render import available_renditions
+    from .renditions import available_renditions
 
     if project.status != "ready":
         raise HTTPException(
@@ -100,7 +100,7 @@ async def create_export(
             detail=f"This project is {project.status}; there is nothing to export yet.",
         )
 
-    from pipeline.s10_render import available_renditions
+    from .renditions import available_renditions
 
     if body.kind == "video":
         allowed = {r.name for r in available_renditions(project.height)}
@@ -161,7 +161,7 @@ def _enqueue_export(export_id: str) -> None:
     the API must stay up when the broker does not.
     """
     try:
-        from worker_gpu.tasks import enqueue_export
+        from .jobqueue import enqueue_export
 
         enqueue_export(export_id)
     except Exception:

@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
-from . import audit, idempotency, problems
+from . import audit, idempotency, logredact, problems
 from .config import get_settings
 from .db import dispose_engine
 from .deps import CurrentUser, OwnedProject, SessionDep, SettingsDep
@@ -51,6 +51,8 @@ API_PREFIX = "/v1"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # At startup rather than import: uvicorn configures its loggers first.
+    logredact.install()
     yield
     await dispose_engine()
     await close_redis()

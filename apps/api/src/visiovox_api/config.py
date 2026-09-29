@@ -91,35 +91,28 @@ class Settings(BaseSettings):
 
     # --- pipeline ---
     pipeline_mode: PipelineMode = "mock"
-    # Run the extractor on its audio-only route even when the upload has a
-    # video track. There is no separate audio-only checkpoint: one model
-    # carries a modality gate, and this withholds the visual cue from it.
-    # Costs separation quality on overlapping speech - that is the project's
-    # whole premise - so it is off unless deliberately set.
-    force_audio_only: bool = False
-    extractor_version: str = "seave-0.1.0"
-    # The trained SEAVE checkpoint the GPU worker loads. Pinned by path rather
-    # than discovered, so a job records which weights produced it.
-    #
-    # NOT c2-v2, despite it being the newest and scoring +11.43 dB on
-    # VoxCeleb2. Measured on the product condition -- real speech, simulated
-    # room, verified overlap -- c2-v2 scores -1.61 dB at two speakers: it makes
-    # user audio worse than leaving it alone. c3 is the only checkpoint that
-    # holds up there (+8.25 / +6.34 dB at two and three speakers), because it
-    # is the only one trained with room simulation and not subsequently
-    # fine-tuned away from it. See scripts/eval_overlap.py.
-    #
-    # c2-v3 is training now with both corpora blended; move this on to it only
-    # once eval_overlap.py says it beats c3 on the product condition, not on
-    # the strength of a VoxCeleb2 number.
-    extractor_checkpoint: str = "~/runs/c3/best.pt"
+    # The serving extractor is AV-MossFormer2 (ClearerVoice-Studio,
+    # alibabasglab/AV_MossFormer2_TSE_16K), conditioned on each speaker's lips.
+    # It replaced the trained SEAVE checkpoint (c3) on 2026-09-29; see
+    # docs/track-w/DECISIONS.md. It runs in its own interpreter because its
+    # dependency set (scenedetect, its own torch build) is unrelated to ours.
+    extractor_version: str = "av-mossformer2-tse-16k"
+    av_tse_python: str = "~/third_party/cv-venv/bin/python"
+    # The ClearerVoice `clearvoice/` directory; the checkpoint lives under
+    # checkpoints/AV_MossFormer2_TSE_16K inside it.
+    av_tse_clearvoice_dir: str = "~/third_party/ClearerVoice-Studio/clearvoice"
+    # Measured at ~1.4x real time on the A5000 including face detection, so
+    # four hours covers the longest admissible upload with room to spare.
+    av_tse_timeout_seconds: int = 4 * 3600
+    # ECAPA cosine above which two time-disjoint face tracks are one person.
+    av_tse_merge_threshold: float = 0.6
     # "cuda" on the workstation, "cpu" anywhere else. Stage code falls back on
     # its own if CUDA is absent, but being explicit keeps CI honest.
     torch_device: str = "cuda"
     # Confinement image for ffmpeg/ffprobe on user media (ADR-0009).
     media_sandbox_image: str = "visiovox/media-sandbox:1"
-    # ECAPA, for scoring enrolment regions. Read from a local directory so a
-    # job never depends on the network.
+    # ECAPA, for telling whether two face tracks are one person. Read from a
+    # local directory so a job never depends on the network.
     speaker_embedder_source: str = "speechbrain/spkrec-ecapa-voxceleb"
     speaker_embedder_dir: str = "~/models/ecapa"
     # pyannote diarization is gated; without a token S2a degrades to VAD only

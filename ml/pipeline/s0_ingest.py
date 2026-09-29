@@ -214,6 +214,14 @@ def ingest(src: Path, out_dir: Path) -> tuple[MediaSet, StageResult]:
                 "23",
                 "-vf",
                 "scale='min(1920,iw)':-2",
+                # This file is also what the player streams. 8-bit 4:2:0 is the
+                # one pixel format every browser decodes (a 10-bit or 4:4:4
+                # phone upload otherwise yields a black player), and faststart
+                # puts the index first so playback starts before the download ends.
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
                 *cfr_args,
                 str(video_out),
             ]

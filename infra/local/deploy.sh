@@ -186,6 +186,15 @@ done
 "${COMPOSE[@]}" exec -T api curl -fsS http://localhost:8000/readyz >/dev/null 2>&1 \
   || die "the API never became ready. Logs: ${COMPOSE[*]} logs api"
 
+# /readyz does not touch Firebase, and an anonymous request is refused before
+# the key is read - so a key the API cannot open passes both and then fails
+# every signed-in request with a 500. Check it from inside the container.
+"${COMPOSE[@]}" exec -T api python -c "open('/run/secrets/firebase-service-account.json').read()" \
+  >/dev/null 2>&1 \
+  || die "the API cannot read secrets/firebase-service-account.json (container user vs file owner)"
+"${COMPOSE[@]}" exec -T api sh -c 'test -w /srv/media/work' \
+  || die "the API cannot write the media volume (container user vs /srv/media owner)"
+
 say "GPU worker (runs on the host, not in compose)"
 if systemctl cat visiovox-worker-gpu >/dev/null 2>&1; then
   # Restarted every deploy so it picks up a regenerated .env.worker. A running

@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from . import audit, problems, quotas, uploads
+from . import audit, jobqueue, problems, quotas, uploads
 from .config import Settings, get_settings
 from .deps import CurrentUser, OwnedProject, OwnedProjectSSE, SessionDep, SettingsDep
 from .models import Job, UploadSession
@@ -387,13 +387,9 @@ def _enqueue(job_id: str, mode: str) -> None:
     """
     try:
         if mode == "real":
-            from worker_gpu.tasks import enqueue
-
-            enqueue(job_id)
+            jobqueue.enqueue_real(job_id)
         else:
-            from worker_cpu.tasks import run_mock_pipeline
-
-            run_mock_pipeline.delay(job_id)
+            jobqueue.enqueue_mock(job_id)
     except Exception:
         logger.warning("could not enqueue job %s (mode=%s)", job_id, mode, exc_info=True)
 
@@ -456,7 +452,7 @@ async def job_events(
     job_id = job.id
 
     async def stream() -> AsyncIterator[dict[str, str]]:
-        from worker_cpu.tasks import read_progress
+        from .jobqueue import read_progress
 
         last: str | None = None
         waited = 0.0

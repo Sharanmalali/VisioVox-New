@@ -176,3 +176,98 @@ media image (it read 196 GB free on a drive with 43 GB).
 renewal fee, unlike the Student Pack `.me` (one year). Renewal window opens
 ~2027-05-31. **Known issue:** BMSCE's FortiGuard filter blocks the new domain on
 campus; it is reachable from everywhere else (verified from DE and PT).
+
+### 2026-09-29 — serving extractor is now AV-MossFormer2; three production bugs the first real upload found
+
+**Extractor.** Asked for directly: the serving model is now AV-MossFormer2
+(ClearerVoice-Studio, `alibabasglab/AV_MossFormer2_TSE_16K`), replacing the
+trained SEAVE checkpoint c3. It is conditioned on each speaker's **lips**, so
+a speaker is now a face track rather than a diarized voice, and the stages
+that only existed to feed c3 a voice reference (S2a diarization, S3 binding,
+S4 enrolment) are gone from the serving path. The pipeline is S0 ingest ->
+S5 extract (runner) -> S3 fuse -> S7 captions -> S9 package.
+
+- **Own interpreter.** It runs as a subprocess under ClearerVoice's venv
+  (`services/worker-gpu/av_tse/run_av_tse.py`, `AV_TSE_PYTHON`): its
+  dependency set is unrelated to ours, and a separate process returns its GPU
+  memory before Whisper loads. `HF_HUB_OFFLINE=1` - a job never waits on the hub.
+- **Timeline.** Each output covers only its face track's frames. The runner
+  takes S0's analysis wav as its soundtrack (S0's video has none), so the
+  tracks land on the timeline every later stage uses; a cross-correlation
+  check measures any residual offset (0 samples in practice, 69 ms when the
+  audio came out of an AAC mp4).
+- **Faces into people.** Silent faces (listeners) are dropped (-30 dB against
+  the mixture over the same span); time-disjoint tracks whose ECAPA voices
+  match (cosine > 0.6) are merged, so a camera cut does not split a person.
+  Speakers are numbered left to right.
+- **Consequences, stated.** An upload with no video, or no visible face, is
+  refused with a message saying why; there is no audio-only route. The model
+  has no confidence output, so `mean_confidence` is the share of the recording
+  the face was visible - the honest ceiling on how complete the track is.
+  Overlap ratio is measured on the separated tracks, so no diarizer is needed.
+- **Not yet shown:** that it beats c3 on the product condition. Measured so
+  far: +9.43 dB SI-SDRi on three VoxCeleb2 side-by-side mixtures at 0 dB -
+  VoxCeleb2 is its training domain. A same-clip comparison against c3 and an
+  AMI test are the open items.
+
+**Three production bugs**, all invisible in development because the workspace
+installs every package into one environment and nothing there runs as another uid:
+
+1. The API container ran as uid 10001; the Firebase key is mode 600 for the
+   host user. Every signed-in request answered 500 - while anonymous ones
+   answered 401, which is what the first deploy checked. The API and migrate
+   containers now run as the host uid, which also lets the API write the media
+   volume it shares with the host worker. `deploy.sh` now checks both from
+   inside the container.
+2. The API imported `worker_gpu.tasks` to enqueue and `worker_cpu.tasks` for
+   progress; the API image contains neither. Every upload was accepted and
+   never ran, and every progress stream crashed. `visiovox_api.jobqueue` now
+   sends by task name and reads progress from Redis directly.
+3. Exports imported `pipeline.s10_render` for the quality ladder. The API
+   keeps its own copy (`visiovox_api.renditions`).
+
+`tests/test_api_packaging.py` now fails if the API imports any worker or ML
+package, if task names drift from the workers', or if the two ladders disagree.
+
+**Also:** uvicorn's access log wrote the progress stream's `?access_token=`
+in full, contradicting the client's own comment. `visiovox_api.logredact`
+redacts it.
+
+**Found by the first end-to-end run through the browser** (sign in -> upload ->
+process -> play -> captions, Playwright against the production stack), after
+the three above - none reachable by any test that stops at the API:
+
+4. **GPU silently not used under systemd.** ClearVoice picks its GPU via
+   `nvidia-smi`, which under WSL is in `/usr/lib/wsl/lib` - not on a unit's
+   PATH - and it then falls back to the CPU while its face detector stays on
+   CUDA, dying on a device mismatch. The worker adds that directory to the
+   runner's PATH, and the runner moves the model to CUDA when CUDA exists.
+5. **The real pipeline's manifest never played.** The player requires
+   `manifest.mixed` (the "Original mix" track) and plays video only from
+   `manifest.video`; S9 produced neither - only the mock did, so the player had
+   only ever met mock output. S9 now takes the mixture and the worker ships
+   S0's re-encode as `video.mp4`. S0 now encodes it `yuv420p` + faststart.
+6. **Captions were written in a shape the player ignores.** S9 wrote the
+   transcript JSON as a bare list; `parseTranscript` reads `{segments: ...}`
+   and returns nothing otherwise. Transcribed, shipped, fetched, never shown.
+7. **`project.height` was never set**, so every project offered audio-only
+   downloads. Set from the manifest's video when a job finishes.
+
+Verified end to end on 2026-09-29: a 33 s two-speaker video (faces appear at
+3.5 s) processed in ~70 s; both speakers play in sync with word-highlighted
+captions of their own speech; every artifact loads through presigned URLs.
+
+**Open, found on the way, not fixed:**
+- **Deletion deletes nothing.** `DELETE /v1/auth/me` and project deletion set
+  `deleted_at` and return "deletion_scheduled", but no job ever purges the
+  rows, the uploads or the results - the docstring's "cascades" does not
+  happen. Stored faces and voices of a deleted account remain indefinitely.
+- **HLS is not wired for the real pipeline.** S9 writes `hls.master`; the
+  player starts HLS only on `master_playlist` and wants per-track `hls`
+  entries. Over 10 minutes the player falls back to Web Audio, which works
+  but holds every track in memory.
+- The failure view shows raw stage names and "Processing - N%" beside a
+  `failed` badge instead of the pipeline's human-readable message.
+- Tested from the campus network through a local TLS route onto the same edge
+  proxy, because BMSCE's FortiGuard filter intercepts the public hostname;
+  the Cloudflare hop itself is verified by external checks.

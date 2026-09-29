@@ -143,16 +143,32 @@ def package(
     video_url: str | None = None,
     video_size: tuple[int, int] | None = None,
     overlap_ratio: float | None = None,
+    mixture: np.ndarray | None = None,
     signed_until: str,
     base_url: str = "",
 ) -> tuple[dict[str, Any], StageResult]:
-    """Write artifacts and build the manifest."""
+    """Write artifacts and build the manifest.
+
+    `mixture` is the unprocessed recording, shipped as the player's "Original
+    mix" track so a listener can compare against what went in. The player
+    requires it (`manifest.mixed`), so a caller that has it must pass it.
+    """
     t0 = time.perf_counter()
     result = StageResult(stage=STAGE, status=StageStatus.OK)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     n_samples = _assert_equal_lengths(tracks)
     duration_ms = samples_to_ms(n_samples)
+
+    mixed: dict[str, Any] | None = None
+    if mixture is not None:
+        if len(mixture) != n_samples:
+            raise PackagingError(
+                f"mixture is {len(mixture)} samples, the speaker tracks {n_samples}"
+            )
+        mixed_path = out_dir / "mixed.m4a"
+        _encode_m4a(_lufs_normalise(mixture), mixed_path, ANALYSIS_SAMPLE_RATE)
+        mixed = {"audio_url": f"{base_url}{mixed_path.name}"}
 
     speakers: list[dict[str, Any]] = []
     for track in tracks:
@@ -180,26 +196,34 @@ def package(
             vtt_path.write_text(track.transcript.to_vtt(), encoding="utf-8")
             captions["vtt"] = f"{base_url}{vtt_path.name}"
 
+            # The player's parseTranscript (apps/web/src/lib/playback/
+            # captions.ts) reads an object with `segments`, and returns
+            # nothing for anything else - so a bare list here meant captions
+            # were transcribed, shipped, fetched and never shown.
             json_path = out_dir / f"{prefix}.json"
             json_path.write_text(
                 json.dumps(
-                    [
-                        {
-                            "text": s.text,
-                            "start_ms": s.start_ms,
-                            "end_ms": s.end_ms,
-                            "words": [
-                                {
-                                    "text": w.text,
-                                    "start_ms": w.start_ms,
-                                    "end_ms": w.end_ms,
-                                    "probability": round(w.probability, 4),
-                                }
-                                for w in s.words
-                            ],
-                        }
-                        for s in track.transcript.segments
-                    ],
+                    {
+                        "language": track.transcript.language,
+                        "language_probability": round(track.transcript.language_probability, 4),
+                        "segments": [
+                            {
+                                "text": s.text,
+                                "start_ms": s.start_ms,
+                                "end_ms": s.end_ms,
+                                "words": [
+                                    {
+                                        "text": w.text,
+                                        "start_ms": w.start_ms,
+                                        "end_ms": w.end_ms,
+                                        "probability": round(w.probability, 4),
+                                    }
+                                    for w in s.words
+                                ],
+                            }
+                            for s in track.transcript.segments
+                        ],
+                    },
                     indent=2,
                 ),
                 encoding="utf-8",
@@ -245,6 +269,8 @@ def package(
         "warnings": list(result.warnings),
         "signed_until": signed_until,
     }
+    if mixed is not None:
+        manifest["mixed"] = mixed
     if has_video and video_url is not None and video_size is not None:
         manifest["video"] = {
             "url": video_url,

@@ -204,3 +204,55 @@ def test_vtt_timestamps_come_from_integer_ms() -> None:
         language_probability=1.0,
     )
     assert "01:01:01.001 --> 01:01:01.500" in t.to_vtt()
+
+
+# --------------------------------------------------------------------------
+# what the player actually reads
+# --------------------------------------------------------------------------
+
+
+@needs_ffmpeg
+def test_the_original_mix_ships_when_given(tmp_path: Path, validator: Draft202012Validator) -> None:
+    """The player builds its track list from `manifest.mixed`; without it, it throws."""
+    tracks = _tracks()
+    mixture = np.sum([t.faithful for t in tracks], axis=0).astype(np.float32)
+    manifest, _ = package(
+        PROJECT_ID,
+        tracks,
+        tmp_path,
+        has_video=False,
+        mixture=mixture,
+        signed_until=SIGNED_UNTIL,
+        base_url="https://cdn.example/",
+    )
+    assert manifest["mixed"] == {"audio_url": "https://cdn.example/mixed.m4a"}
+    assert (tmp_path / "mixed.m4a").stat().st_size > 0
+    errors = sorted(validator.iter_errors(manifest), key=lambda e: e.json_path)
+    assert not errors, "\n".join(f"{e.json_path}: {e.message}" for e in errors)
+
+
+def test_a_mixture_of_another_length_is_refused(tmp_path: Path) -> None:
+    tracks = _tracks()
+    with pytest.raises(PackagingError, match="mixture"):
+        package(
+            PROJECT_ID,
+            tracks,
+            tmp_path,
+            has_video=False,
+            mixture=np.zeros(len(tracks[0].faithful) - 1, dtype=np.float32),
+            signed_until=SIGNED_UNTIL,
+        )
+
+
+@needs_ffmpeg
+def test_caption_json_is_the_shape_the_player_parses(tmp_path: Path) -> None:
+    """apps/web/src/lib/playback/captions.ts parseTranscript: an object with
+    `segments`, each with numeric start_ms/end_ms and string text. A bare list
+    parses to nothing, and the player then shows no captions at all."""
+    package(PROJECT_ID, _tracks(1), tmp_path, has_video=False, signed_until=SIGNED_UNTIL)
+    body = json.loads((tmp_path / "spk_1.json").read_text())
+    assert isinstance(body, dict)
+    assert body["language"] == "en"
+    seg = body["segments"][0]
+    assert (seg["text"], seg["start_ms"], seg["end_ms"]) == ("hello there", 100, 900)
+    assert seg["words"][0] == {"text": "hello", "start_ms": 100, "end_ms": 500, "probability": 0.94}

@@ -105,9 +105,18 @@ services:
       context: .
       dockerfile: infra/docker/Dockerfile.api
     <<: *restart
+    # The host account that owns the repo, not the image's own uid 10001. Two
+    # things are shared with the host and owned by that account: the Firebase
+    # key (mode 600, deliberately) and the media volume, which the host GPU
+    # worker writes too. As 10001 the API could read neither, and every
+    # authenticated request answered 500 - while unauthenticated ones
+    # correctly answered 401, which is why it was not caught at first deploy.
+    user: '${APP_UID:-1000}:${APP_GID:-1000}'
     env_file: [.env.production]
     environment:
       ENVIRONMENT: production
+      # uid 1000 has no home directory in the image.
+      HOME: /tmp
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-visiovox}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-visiovox}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
@@ -141,9 +150,11 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.api
+    user: '${APP_UID:-1000}:${APP_GID:-1000}'
     env_file: [.env.production]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-visiovox}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-visiovox}
+      HOME: /tmp
     # Runs once per deploy and exits. Separate from the API so a migration
     # failure stops the deploy instead of crash-looping a service.
     command: ['alembic', 'upgrade', 'head']
