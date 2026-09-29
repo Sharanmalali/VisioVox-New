@@ -3,13 +3,14 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import type { ProjectResponse } from '@visiovox/ts-client';
-import { api } from '@/lib/store';
+import { api, useRequireSignIn } from '@/lib/store';
 
 export default function ProjectsPage() {
   const router = useRouter();
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const authed = useRequireSignIn();
 
   const load = useCallback(async () => {
     try {
@@ -21,8 +22,8 @@ export default function ProjectsPage() {
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (authed) void load();
+  }, [load, authed]);
 
   async function upload(file: File) {
     setBusy(true);

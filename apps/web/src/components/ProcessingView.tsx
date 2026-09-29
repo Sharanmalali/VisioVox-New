@@ -29,7 +29,7 @@ import { formatDuration } from '@/lib/upload/resumable';
  * Keyed on the stage identifiers the worker emits (docs/05 §2), so a renamed
  * stage shows its raw name rather than a confidently wrong description.
  */
-const STAGE_COPY: Record<string, { title: string; detail: string }> = {
+export const STAGE_COPY: Record<string, { title: string; detail: string }> = {
   S0_ingest: {
     title: 'Reading the recording',
     detail: 'Checking the file is what it claims to be, and pulling out the audio.',

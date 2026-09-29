@@ -14,6 +14,8 @@
  */
 
 import { VisioVoxClient } from '@visiovox/ts-client';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 import { create } from 'zustand';
 
 import { idToken, signOutEverywhere, watchAuth } from '@/lib/firebase';
@@ -95,3 +97,30 @@ export const useSession = create<SessionState>((set) => ({
     set({ signedIn: false, email: null });
   },
 }));
+
+/**
+ * Gate for a page that calls the API as soon as it mounts.
+ *
+ * Firebase restores a session asynchronously, so on a fresh page load - a
+ * link from the vault, a refresh, a pasted URL - the first render happens
+ * before any user is known. A request made then goes out with no token and
+ * the API rightly answers 401, which such a page used to show as its error
+ * ("401: missing bearer token") and never retried. Returns true once a
+ * signed-in session is restored; sends a signed-out visitor to the login page.
+ */
+export function useRequireSignIn(): boolean {
+  const router = useRouter();
+  const signedIn = useSession((s) => s.signedIn);
+  const ready = useSession((s) => s.ready);
+  const hydrate = useSession((s) => s.hydrate);
+
+  useEffect(() => {
+    hydrate();
+  }, [hydrate]);
+
+  useEffect(() => {
+    if (ready && !signedIn) router.replace('/login');
+  }, [ready, signedIn, router]);
+
+  return ready && signedIn;
+}

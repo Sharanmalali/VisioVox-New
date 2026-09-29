@@ -23,8 +23,11 @@ import {
   type PhaseId,
   type PhaseState,
 } from '@/components/console/TelemetryLog';
+import { Player } from '@/components/Player';
+import { STAGE_COPY } from '@/components/ProcessingView';
 import { Alert, Badge, Key, Progress, cx } from '@/components/ui';
 import { signOutEverywhere } from '@/lib/firebase';
+import type { Manifest } from '@/lib/playback/manifest';
 import { accessToken, api, useSession } from '@/lib/store';
 import {
   formatBytes,
@@ -49,6 +52,16 @@ interface JobEvent {
 }
 
 const TERMINAL = new Set(['succeeded', 'partial', 'failed', 'cancelled']);
+const SUCCEEDED = new Set(['succeeded', 'partial']);
+
+/** How often to ask the API directly, in case the live stream is not arriving. */
+const POLL_MS = 5000;
+
+/** A job's stage as a person would say it, not as the pipeline names it. */
+function stageLabel(job: JobEvent): string {
+  if (job.stage !== null) return STAGE_COPY[job.stage]?.title ?? job.stage;
+  return job.status === 'queued' ? 'Waiting for the GPU' : 'Processing';
+}
 
 export default function StudioPage() {
   const router = useRouter();
@@ -69,6 +82,7 @@ export default function StudioPage() {
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [job, setJob] = useState<JobEvent | null>(null);
+  const [manifest, setManifest] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<LogLine[]>([]);
 
@@ -77,6 +91,9 @@ export default function StudioPage() {
   const lineId = useRef(0);
   const lastPart = useRef(-1);
   const lastStage = useRef<string | null>(null);
+  // The job this page has already announced as finished, so the stream and the
+  // poll reporting the same ending do not log it (or switch tabs) twice.
+  const announced = useRef<string | null>(null);
 
   const log = useCallback((text: string, tone?: LogLine['tone']) => {
     lineId.current += 1;
@@ -109,8 +126,13 @@ export default function StudioPage() {
   }, [signedIn]);
 
   // ------------------------------------------------------------- job feed --
+  // The job row is created when the upload completes. Opened before that - as
+  // this once was, the moment the project existed - the stream is answered
+  // "no job yet", closes, and never comes back: the bar then only moved in
+  // the poll's 5 s steps, with no stage names.
+  const uploadDone = progress?.phase === 'done';
   useEffect(() => {
-    if (projectId === null) return;
+    if (projectId === null || !uploadDone) return;
     const token = accessToken();
     if (token === null) return;
 
@@ -132,12 +154,6 @@ export default function StudioPage() {
       if (TERMINAL.has(data.status)) {
         closed = true;
         source.close();
-        if (data.status === 'succeeded' || data.status === 'partial') {
-          log(`SEPARATION_COMPLETE · ${String(data.speakers ?? 0)}_SPEAKERS`, 'good');
-          setTab('preview');
-        } else {
-          log(`JOB_${data.status.toUpperCase()}`, 'bad');
-        }
       }
     };
 
@@ -151,7 +167,72 @@ export default function StudioPage() {
       closed = true;
       source.close();
     };
-  }, [projectId, log]);
+  }, [projectId, uploadDone, log]);
+
+  // The stream above is the fast path. This is the one that cannot be lost: a
+  // proxy that buffers text/event-stream, a dropped connection or a stream
+  // that ended before the job did would otherwise leave the page at its last
+  // event for good - never reaching `ready`, never offering the preview.
+  useEffect(() => {
+    if (projectId === null || !uploadDone) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = async (): Promise<void> => {
+      try {
+        const j = await api().getJob(projectId);
+        if (stopped) return;
+        setJob((prev) => {
+          // Never step backwards: the stream may already be further along.
+          if (prev !== null && !TERMINAL.has(j.status) && prev.progress > j.progress) return prev;
+          return { status: j.status, progress: j.progress, stage: prev?.stage ?? null };
+        });
+        if (TERMINAL.has(j.status)) return;
+      } catch {
+        // Transient; the next check will tell.
+      }
+      if (!stopped) timer = setTimeout(() => void check(), POLL_MS);
+    };
+    timer = setTimeout(() => void check(), POLL_MS);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [projectId, uploadDone]);
+
+  // One place that reacts to the job ending, whichever path reported it.
+  useEffect(() => {
+    if (job === null || projectId === null || !TERMINAL.has(job.status)) return;
+    if (announced.current === projectId) return;
+    announced.current = projectId;
+    if (SUCCEEDED.has(job.status)) {
+      log(
+        `SEPARATION_COMPLETE${job.speakers != null ? ` · ${String(job.speakers)}_SPEAKERS` : ''}`,
+        'good',
+      );
+      setTab('preview');
+    } else {
+      log(`JOB_${job.status.toUpperCase()}`, 'bad');
+    }
+  }, [job, projectId, log]);
+
+  // The player needs the manifest, whose URLs are signed with an expiry - so
+  // it is fetched when there is something to play, not before.
+  const succeeded = job !== null && SUCCEEDED.has(job.status);
+  useEffect(() => {
+    if (projectId === null || !succeeded) return;
+    let cancelled = false;
+    api()
+      .getManifest(projectId)
+      .then((body) => {
+        if (!cancelled) setManifest(body as Manifest);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the result');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, succeeded]);
 
   // ---------------------------------------------------------------- pick --
   function choose(picked: File) {
@@ -211,8 +292,11 @@ export default function StudioPage() {
     setProgress(null);
     setProjectId(null);
     setJob(null);
+    setManifest(null);
+    setError(null);
     setLines([]);
     lastStage.current = null;
+    announced.current = null;
     lastPart.current = -1;
   }
 
@@ -238,10 +322,13 @@ export default function StudioPage() {
           ? 'Ready'
           : 'Failed'
         : job !== null
-          ? `Processing · ${String(Math.round(job.progress * 100))}%`
-          : uploading
-            ? `Uploading · ${String(Math.round(progress.fraction * 100))}%`
-            : 'Idle';
+          ? // A whole percentage from the server (0-100), not a fraction.
+            `Processing · ${String(Math.round(job.progress))}%`
+          : uploaded
+            ? 'Queued'
+            : uploading
+              ? `Uploading · ${String(Math.round(progress.fraction * 100))}%`
+              : 'Idle';
 
   if (!ready) {
     return (
@@ -350,7 +437,12 @@ export default function StudioPage() {
 
                 {progress !== null && (
                   <div className="flex flex-col gap-3">
-                    <Progress value={progress.fraction * 100} label="Stream to storage" />
+                    {/* Only the upload. A small file fills this almost at once;
+                        separating it is the bar below, which starts after. */}
+                    <Progress
+                      value={progress.fraction * 100}
+                      label={uploaded ? 'Upload complete' : 'Uploading to storage'}
+                    />
                     <div className="flex flex-wrap justify-between gap-3 font-mono text-[11px] text-dust">
                       <span>
                         chunk {String(progress.partsDone)}/{String(progress.partsTotal)}
@@ -371,12 +463,22 @@ export default function StudioPage() {
                   </div>
                 )}
 
-                {job !== null && (
+                {job !== null ? (
                   <Progress
-                    value={job.progress * 100}
-                    label={job.stage ?? 'Processing'}
-                    tone="success"
+                    // Already a percentage (0-100). Multiplying it by 100 again
+                    // is what made this bar read full at the first update.
+                    value={job.progress}
+                    label={
+                      jobDone
+                        ? SUCCEEDED.has(job.status)
+                          ? 'Separation complete'
+                          : 'Separation failed'
+                        : `Separating · ${stageLabel(job)}`
+                    }
+                    tone={jobDone && !SUCCEEDED.has(job.status) ? 'warning' : 'success'}
                   />
+                ) : (
+                  uploaded && <Progress value={0} label="Separating · Waiting for the GPU" />
                 )}
 
                 {error !== null && <Alert tone="danger">{error}</Alert>}
@@ -417,20 +519,44 @@ export default function StudioPage() {
             <p className="font-mono text-[12px] text-dust">
               Nothing loaded. Ingest a recording, or open one from the vault.
             </p>
-          ) : (
+          ) : !jobDone ? (
+            // Still going: say where it is, and that the player lands here.
             <div className="flex flex-col gap-4">
               <p className="font-mono text-[12px] text-dust">
-                {jobDone ? 'Separation complete.' : 'Still processing — this updates as it runs.'}
+                Still separating. The player appears here as soon as it is ready - no need to leave
+                this page.
               </p>
+              <Progress
+                value={job?.progress ?? 0}
+                label={job !== null ? stageLabel(job) : 'Waiting for the upload to finish'}
+                tone="success"
+              />
+            </div>
+          ) : succeeded ? (
+            <div className="flex flex-col gap-4">
+              {manifest !== null ? (
+                <Player manifest={manifest} />
+              ) : error !== null ? (
+                <Alert tone="danger" title="The result could not be loaded">
+                  {error}
+                </Alert>
+              ) : (
+                <p className="font-mono text-[12px] text-dust">Loading the player…</p>
+              )}
               <Key
                 tone="acid"
                 onClick={() => {
                   router.push(`/projects/${projectId}`);
                 }}
               >
-                Open the player
+                Downloads and sharing
               </Key>
             </div>
+          ) : (
+            <Alert tone="danger" title="This recording could not be separated">
+              The job ended {job.status}. Open it from the vault for the stage that stopped it.
+              VisioVox needs the speakers&apos; faces on screen to tell their voices apart.
+            </Alert>
           )}
         </Module>
       )}

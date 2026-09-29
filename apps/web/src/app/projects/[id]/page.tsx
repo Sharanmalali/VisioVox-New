@@ -3,7 +3,7 @@
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import type { JobResponse, ProjectResponse } from '@visiovox/ts-client';
-import { accessToken, api } from '@/lib/store';
+import { accessToken, api, useRequireSignIn } from '@/lib/store';
 import { ExportPanel } from '@/components/ExportPanel';
 import { SharePanel } from '@/components/SharePanel';
 import { ProcessingView } from '@/components/ProcessingView';
@@ -26,8 +26,13 @@ export default function ProjectPage() {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Nothing is fetched until the session is restored: opened from the vault
+  // or refreshed, the first render has no user yet, and a request then goes
+  // out without a token.
+  const authed = useRequireSignIn();
 
   useEffect(() => {
+    if (!authed) return;
     // Read through a function: TypeScript narrows a plain boolean (or an
     // object property) to `false` after the first check and keeps that
     // narrowing across `await`, then reports every later check as dead.
@@ -64,7 +69,7 @@ export default function ProjectPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, authed]);
 
   // The manifest carries signed URLs with an expiry, so it is fetched once the
   // project reaches `ready` rather than alongside the project record — there is
