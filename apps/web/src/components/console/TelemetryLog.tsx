@@ -1,50 +1,59 @@
 'use client';
 
 /**
- * The telemetry console.
+ * The activity feed: what is happening to the customer's video, in their words.
  *
  * Every line here is something that actually happened. The temptation with a
- * log like this is to invent activity so the wait feels shorter — a fake crawl,
- * a stage that ticks on a timer. That would be the interface claiming a
+ * feed like this is to invent activity so the wait feels shorter - a fake
+ * crawl, a stage that ticks on a timer. That would be the interface claiming a
  * capability the product does not have, and the first time a job stalled the
- * log would keep cheerfully scrolling. So lines are appended only when the
- * upload reports a part, or the server sends a job event.
+ * feed would keep cheerfully scrolling. So lines are appended only when the
+ * upload reports progress or the server sends a job event.
+ *
+ * Below the feed, the same steps as the progress bar (lib/journey.ts), as a
+ * checklist: a bar implies a rate, and these steps have very different lengths.
  */
 
 import { useEffect, useRef } from 'react';
 
 import { cx } from '@/components/ui';
-
-/** The three phases the machine passes through, in the machine's own words. */
-export const PHASES = [
-  { id: 'slice', label: 'SLICING_STREAM_INTO_TEMPORARY_CACHE' },
-  { id: 'infer', label: 'MODEL_INFERENCE_CORE_PROCESSING' },
-  { id: 'pack', label: 'HLS_TRANSCODING_MULTI_RESOLUTION' },
-] as const;
-
-export type PhaseId = (typeof PHASES)[number]['id'];
-export type PhaseState = 'idle' | 'active' | 'done';
+import { STEPS, type StepId, type StepState } from '@/lib/journey';
 
 export interface LogLine {
   /** Monotonic, so React keys stay stable as the buffer is trimmed. */
   id: number;
+  /** When it happened (epoch ms), shown as a clock time. */
+  at: number;
   text: string;
   tone?: 'normal' | 'good' | 'bad';
 }
 
+const clock = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
+const STATE_WORD: Record<StepState, string> = {
+  done: 'complete',
+  active: 'in progress',
+  failed: 'stopped',
+  pending: 'waiting',
+};
+
 export function TelemetryLog({
   lines,
-  phases,
-  idleMessage = 'Idle. Drop a recording to begin.',
+  steps,
+  idleMessage = 'Choose a recording to begin. Updates about your video will appear here.',
 }: {
   lines: readonly LogLine[];
-  phases: Readonly<Record<PhaseId, PhaseState>>;
+  steps: Readonly<Record<StepId, StepState>>;
   idleMessage?: string;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
 
-  // Follow the tail. Jumping to the bottom on every render would fight anyone
-  // scrolling back, but the log is short-lived and unscrolled in practice.
+  // Follow the tail. The feed is short-lived and rarely scrolled back.
   useEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -54,72 +63,73 @@ export function TelemetryLog({
     <div className="flex h-full flex-col">
       <div
         ref={scroller}
-        // A log is a feed: announce new lines, but politely — this is status,
-        // not something the reader must act on.
+        // A feed: announce new lines, but politely - this is status, not
+        // something the reader must act on.
         role="log"
         aria-live="polite"
-        aria-label="Processing telemetry"
-        className="scanlines min-h-[220px] flex-1 overflow-y-auto bg-void p-4 font-mono text-[12px] leading-relaxed"
+        aria-label="Activity for your video"
+        className="scanlines min-h-[220px] flex-1 overflow-y-auto bg-void p-4 text-[13px] leading-relaxed"
       >
         {lines.length === 0 ? (
           <p className="text-dust">{idleMessage}</p>
         ) : (
-          <ul className="flex flex-col gap-1">
+          <ol className="flex flex-col gap-2.5">
             {lines.map((line) => (
-              <li
-                key={line.id}
-                className={cx(
-                  line.tone === 'good' && 'text-acid',
-                  line.tone === 'bad' && 'text-crimson',
-                  (line.tone === undefined || line.tone === 'normal') && 'text-chalk/85',
-                )}
-              >
-                <span className="text-dust">›</span> {line.text}
+              <li key={line.id} className="grid grid-cols-[auto_1fr] gap-x-3">
+                <time
+                  dateTime={new Date(line.at).toISOString()}
+                  className="pt-px font-mono text-[11px] tabular-nums text-dust"
+                >
+                  {clock.format(line.at)}
+                </time>
+                <span
+                  className={cx(
+                    line.tone === 'good' && 'text-acid',
+                    line.tone === 'bad' && 'text-crimson',
+                    (line.tone === undefined || line.tone === 'normal') && 'text-chalk/90',
+                  )}
+                >
+                  {line.text}
+                </span>
               </li>
             ))}
-            <li className="text-acid">
-              <span className="cursor-blink">█</span>
-            </li>
-          </ul>
+          </ol>
         )}
       </div>
 
-      {/* The three phases, as a checklist rather than a progress bar: a bar
-          implies a rate, and these have wildly different durations. */}
-      <ul className="flex flex-col gap-2 border-t-4 border-edge p-4">
-        {PHASES.map((phase) => {
-          const state = phases[phase.id];
+      <ol className="flex flex-col gap-2 border-t-4 border-edge p-4" aria-label="Progress">
+        {STEPS.map((step, i) => {
+          const state = steps[step.id];
           return (
-            <li key={phase.id} className="flex items-center gap-3">
+            <li key={step.id} className="flex items-center gap-3">
               <span
                 aria-hidden="true"
                 className={cx(
-                  'grid h-4 w-4 shrink-0 place-items-center border-2 border-edge text-[10px] font-bold',
+                  'grid h-5 w-5 shrink-0 place-items-center border-2 border-edge font-mono text-[10px] font-bold',
                   state === 'done' && 'bg-acid text-edge',
                   state === 'active' && 'ticker bg-crimson text-white',
-                  state === 'idle' && 'bg-raised',
+                  state === 'failed' && 'bg-crimson text-white',
+                  state === 'pending' && 'bg-raised text-dust',
                 )}
               >
-                {state === 'done' ? '✓' : ''}
+                {state === 'done' ? '✓' : state === 'failed' ? '✕' : String(i + 1)}
               </span>
               <span
                 className={cx(
-                  'font-mono text-[11px] tracking-[0.06em]',
+                  'text-[13px]',
                   state === 'done' && 'text-acid',
-                  state === 'active' && 'text-chalk',
-                  state === 'idle' && 'text-dust',
+                  (state === 'active' || state === 'failed') && 'font-semibold text-chalk',
+                  state === 'pending' && 'text-dust',
                 )}
               >
-                {phase.label}
+                {step.title}
               </span>
               {/* Never colour alone: the state is also a word (NFR-A11Y-06). */}
-              <span className="sr-only">
-                {state === 'done' ? 'complete' : state === 'active' ? 'in progress' : 'waiting'}
-              </span>
+              <span className="sr-only">{STATE_WORD[state]}</span>
             </li>
           );
         })}
-      </ul>
+      </ol>
     </div>
   );
 }

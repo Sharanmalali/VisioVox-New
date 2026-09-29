@@ -17,16 +17,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConsoleChrome, Module, type Tab } from '@/components/console/ConsoleChrome';
-import {
-  TelemetryLog,
-  type LogLine,
-  type PhaseId,
-  type PhaseState,
-} from '@/components/console/TelemetryLog';
+import { TelemetryLog, type LogLine } from '@/components/console/TelemetryLog';
 import { Player } from '@/components/Player';
-import { STAGE_COPY } from '@/components/ProcessingView';
 import { Alert, Badge, Key, Progress, cx } from '@/components/ui';
 import { signOutEverywhere } from '@/lib/firebase';
+import { STAGE_MESSAGE, formatElapsed, journey } from '@/lib/journey';
 import type { Manifest } from '@/lib/playback/manifest';
 import { accessToken, api, useSession } from '@/lib/store';
 import {
@@ -57,11 +52,8 @@ const SUCCEEDED = new Set(['succeeded', 'partial']);
 /** How often to ask the API directly, in case the live stream is not arriving. */
 const POLL_MS = 5000;
 
-/** A job's stage as a person would say it, not as the pipeline names it. */
-function stageLabel(job: JobEvent): string {
-  if (job.stage !== null) return STAGE_COPY[job.stage]?.title ?? job.stage;
-  return job.status === 'queued' ? 'Waiting for the GPU' : 'Processing';
-}
+/** Upload milestones worth a line in the feed; every part would be noise on a big file. */
+const UPLOAD_MILESTONES = [25, 50, 75];
 
 export default function StudioPage() {
   const router = useRouter();
@@ -89,16 +81,17 @@ export default function StudioPage() {
   const handleRef = useRef<UploadHandle | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const lineId = useRef(0);
-  const lastPart = useRef(-1);
+  const lastMilestone = useRef(0);
   const lastStage = useRef<string | null>(null);
+  const startedAt = useRef<number | null>(null);
   // The job this page has already announced as finished, so the stream and the
   // poll reporting the same ending do not log it (or switch tabs) twice.
   const announced = useRef<string | null>(null);
 
   const log = useCallback((text: string, tone?: LogLine['tone']) => {
     lineId.current += 1;
-    const entry: LogLine =
-      tone === undefined ? { id: lineId.current, text } : { id: lineId.current, text, tone };
+    const base = { id: lineId.current, at: Date.now(), text };
+    const entry: LogLine = tone === undefined ? base : { ...base, tone };
     // Bounded: a long job would otherwise grow this array without limit.
     setLines((prev) => [...prev, entry].slice(-200));
   }, []);
@@ -149,7 +142,8 @@ export default function StudioPage() {
       setJob(data);
       if (data.stage !== null && data.stage !== lastStage.current) {
         lastStage.current = data.stage;
-        log(data.stage.toUpperCase().replace(/[\s-]+/g, '_'));
+        const message = STAGE_MESSAGE[data.stage];
+        if (message !== undefined) log(message);
       }
       if (TERMINAL.has(data.status)) {
         closed = true;
@@ -204,14 +198,42 @@ export default function StudioPage() {
     if (job === null || projectId === null || !TERMINAL.has(job.status)) return;
     if (announced.current === projectId) return;
     announced.current = projectId;
+    const took = startedAt.current !== null ? formatElapsed(Date.now() - startedAt.current) : null;
     if (SUCCEEDED.has(job.status)) {
-      log(
-        `SEPARATION_COMPLETE${job.speakers != null ? ` · ${String(job.speakers)}_SPEAKERS` : ''}`,
-        'good',
-      );
-      setTab('preview');
+      const partial = job.status === 'partial';
+      const announce = (speakers: number | null): void => {
+        const who =
+          speakers !== null
+            ? `${String(speakers)} speaker${speakers === 1 ? '' : 's'} separated`
+            : 'Speakers separated';
+        log(`Your video is ready — ${who}${took !== null ? ` in ${took}` : ''}.`, 'good');
+        if (partial) {
+          log('Some passages could not be fully separated — they are marked in the player.');
+        }
+        log('Opening the preview…');
+        setTab('preview');
+      };
+      // The stream's final event carries the count; the backup poll does not,
+      // so ask the project rather than say something vaguer.
+      if (job.speakers != null) {
+        announce(job.speakers);
+      } else {
+        void api()
+          .getProject(projectId)
+          .then((p) => {
+            announce(p.speaker_count ?? null);
+          })
+          .catch(() => {
+            announce(null);
+          });
+      }
+    } else if (job.status === 'cancelled') {
+      log('Processing was cancelled.', 'bad');
     } else {
-      log(`JOB_${job.status.toUpperCase()}`, 'bad');
+      log(
+        "We couldn't separate the speakers in this video. VisioVox needs each speaker's face clearly on screen — please try another recording.",
+        'bad',
+      );
     }
   }, [job, projectId, log]);
 
@@ -239,11 +261,13 @@ export default function StudioPage() {
     setFile(picked);
     setError(null);
     setInspected(null);
-    log(`FILE_SELECTED · ${picked.name} · ${formatBytes(picked.size)}`);
+    log(`Selected "${picked.name}" (${formatBytes(picked.size)}).`);
     void inspectLocally(picked).then((meta) => {
       setInspected(meta);
       if (meta.durationSeconds !== null) {
-        log(`LOCAL_PROBE · ${formatDuration(meta.durationSeconds)}`);
+        const size =
+          meta.width !== null ? `, ${String(meta.width)}×${String(meta.height ?? 0)}` : '';
+        log(`Checked your file: ${formatDuration(meta.durationSeconds)}${size}. Ready to upload.`);
       }
     });
   }
@@ -251,36 +275,43 @@ export default function StudioPage() {
   async function begin() {
     if (file === null) return;
     setError(null);
-    lastPart.current = -1;
+    lastMilestone.current = 0;
+    startedAt.current = Date.now();
     try {
       const project = await api().createProject(file.name);
       setProjectId(project.id);
-      log(`PROJECT_OPENED · ${project.id}`);
+      log('Uploading your video…');
       handleRef.current = await startUpload({
         client: api(),
         projectId: project.id,
         file,
         onProgress: (p) => {
           setProgress(p);
-          // One line per part that actually landed — not per render.
-          if (p.partsDone > lastPart.current) {
-            lastPart.current = p.partsDone;
-            if (p.partsDone > 0) {
-              log(`CHUNK ${String(p.partsDone)}/${String(p.partsTotal)} → TEMPORARY_CACHE`);
-            }
+          const pct = Math.floor(p.fraction * 100);
+          const next = UPLOAD_MILESTONES.find((m) => m > lastMilestone.current && pct >= m);
+          if (p.phase === 'uploading' && p.partsTotal > 1 && next !== undefined) {
+            lastMilestone.current = next;
+            log(`Uploading… ${String(next)}% sent.`);
           }
-          if (p.phase === 'finalising') log('ASSEMBLING_PARTS_SERVER_SIDE');
-          if (p.phase === 'done') log('UPLOAD_COMPLETE · QUEUED_FOR_INFERENCE', 'good');
+          if (p.phase === 'done') {
+            log(
+              'Upload successful. Your video has been received and is queued for processing.',
+              'good',
+            );
+          }
           if (p.phase === 'error') {
             setError(p.error ?? 'Upload failed');
-            log(`UPLOAD_FAILED · ${p.error ?? 'unknown'}`, 'bad');
+            log(
+              `The upload didn't finish${p.error ? ` (${p.error})` : ''}. Please check your connection and try again.`,
+              'bad',
+            );
           }
         },
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not start the upload';
       setError(message);
-      log(`ERROR · ${message}`, 'bad');
+      log(`We couldn't start the upload: ${message}`, 'bad');
     }
   }
 
@@ -297,7 +328,8 @@ export default function StudioPage() {
     setLines([]);
     lastStage.current = null;
     announced.current = null;
-    lastPart.current = -1;
+    lastMilestone.current = 0;
+    startedAt.current = null;
   }
 
   // -------------------------------------------------------------- derived --
@@ -305,30 +337,25 @@ export default function StudioPage() {
   const uploaded = progress?.phase === 'done';
   const jobDone = job !== null && TERMINAL.has(job.status);
 
-  const phases: Record<PhaseId, PhaseState> = {
-    slice: uploading ? 'active' : uploaded ? 'done' : 'idle',
-    infer: jobDone ? 'done' : job !== null ? 'active' : 'idle',
-    pack: jobDone && (job.status === 'succeeded' || job.status === 'partial') ? 'done' : 'idle',
-  };
+  // One reading of where the video is, shared by the bar, the checklist and
+  // the status line, so none of them can say something the others do not.
+  const trip = journey({
+    uploadPhase: progress?.phase ?? null,
+    uploadFraction: progress?.fraction ?? 0,
+    job,
+  });
 
   const maxBytes = limits?.max_upload_bytes ?? null;
   const tooBig = file !== null && maxBytes !== null && file.size > maxBytes;
 
   const status =
-    error !== null
-      ? 'Error'
-      : jobDone
-        ? job.status === 'succeeded' || job.status === 'partial'
-          ? 'Ready'
-          : 'Failed'
-        : job !== null
-          ? // A whole percentage from the server (0-100), not a fraction.
-            `Processing · ${String(Math.round(job.progress))}%`
-          : uploaded
-            ? 'Queued'
-            : uploading
-              ? `Uploading · ${String(Math.round(progress.fraction * 100))}%`
-              : 'Idle';
+    error !== null || trip.failed
+      ? 'Needs attention'
+      : trip.finished
+        ? 'Ready'
+        : progress !== null
+          ? `${trip.label} · ${String(trip.percent)}%`
+          : 'Idle';
 
   if (!ready) {
     return (
@@ -351,7 +378,7 @@ export default function StudioPage() {
       }}
     >
       {tab === 'ingest' && (
-        <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
+        <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
           <Module
             label="Ingestion node"
             tone="bone"
@@ -417,14 +444,20 @@ export default function StudioPage() {
                         ` · ${String(inspected.width)}×${String(inspected.height ?? 0)}`}
                     </p>
                   </div>
-                  <Badge tone={tooBig ? 'danger' : uploaded ? 'success' : 'neutral'}>
+                  <Badge
+                    tone={tooBig || trip.failed ? 'danger' : trip.finished ? 'success' : 'neutral'}
+                  >
                     {tooBig
                       ? 'Too large'
-                      : uploaded
-                        ? 'Uploaded'
-                        : uploading
-                          ? 'Uploading'
-                          : 'Ready'}
+                      : trip.failed
+                        ? 'Needs attention'
+                        : trip.finished
+                          ? 'Ready'
+                          : uploading
+                            ? 'Uploading'
+                            : uploaded
+                              ? 'Processing'
+                              : 'Not started'}
                   </Badge>
                 </div>
 
@@ -437,48 +470,40 @@ export default function StudioPage() {
 
                 {progress !== null && (
                   <div className="flex flex-col gap-3">
-                    {/* Only the upload. A small file fills this almost at once;
-                        separating it is the bar below, which starts after. */}
+                    {/* The whole journey in one bar, named by the same step as the
+                        checklist beside it (lib/journey.ts). The upload is its
+                        first tenth; the server's percentage fills the rest. */}
                     <Progress
-                      value={progress.fraction * 100}
-                      label={uploaded ? 'Upload complete' : 'Uploading to storage'}
+                      value={trip.percent}
+                      label={
+                        trip.failed
+                          ? `Stopped at: ${trip.current.title}`
+                          : trip.finished
+                            ? 'Ready to watch'
+                            : trip.label
+                      }
+                      tone={trip.failed ? 'warning' : 'success'}
                     />
-                    <div className="flex flex-wrap justify-between gap-3 font-mono text-[11px] text-dust">
-                      <span>
-                        chunk {String(progress.partsDone)}/{String(progress.partsTotal)}
-                      </span>
-                      <span>
-                        {progress.bytesPerSecond === null
-                          ? 'measuring rate…'
-                          : `${formatBytes(progress.bytesPerSecond)}/s`}
-                      </span>
-                      <span>
-                        {/* Null until the rate means something, rather than a
-                            confident number that is wrong for the first seconds. */}
-                        {progress.secondsRemaining === null
-                          ? 'estimating…'
-                          : `${formatDuration(progress.secondsRemaining)} left`}
-                      </span>
-                    </div>
+                    {uploading && (
+                      <div className="flex flex-wrap justify-between gap-3 font-mono text-[11px] text-dust">
+                        <span>
+                          {formatBytes(progress.fraction * file.size)} of {formatBytes(file.size)}
+                        </span>
+                        <span>
+                          {progress.bytesPerSecond === null
+                            ? 'measuring speed…'
+                            : `${formatBytes(progress.bytesPerSecond)}/s`}
+                        </span>
+                        <span>
+                          {/* Null until the rate means something, rather than a
+                              confident number that is wrong for the first seconds. */}
+                          {progress.secondsRemaining === null
+                            ? 'estimating…'
+                            : `${formatDuration(progress.secondsRemaining)} left`}
+                        </span>
+                      </div>
+                    )}
                   </div>
-                )}
-
-                {job !== null ? (
-                  <Progress
-                    // Already a percentage (0-100). Multiplying it by 100 again
-                    // is what made this bar read full at the first update.
-                    value={job.progress}
-                    label={
-                      jobDone
-                        ? SUCCEEDED.has(job.status)
-                          ? 'Separation complete'
-                          : 'Separation failed'
-                        : `Separating · ${stageLabel(job)}`
-                    }
-                    tone={jobDone && !SUCCEEDED.has(job.status) ? 'warning' : 'success'}
-                  />
-                ) : (
-                  uploaded && <Progress value={0} label="Separating · Waiting for the GPU" />
                 )}
 
                 {error !== null && <Alert tone="danger">{error}</Alert>}
@@ -507,8 +532,8 @@ export default function StudioPage() {
             )}
           </Module>
 
-          <Module label="Telemetry" tone="crimson" right="▣ −" bodyClassName="p-0">
-            <TelemetryLog lines={lines} phases={phases} />
+          <Module label="Activity" tone="crimson" right="live" bodyClassName="p-0">
+            <TelemetryLog lines={lines} steps={trip.states} />
           </Module>
         </div>
       )}
@@ -526,11 +551,7 @@ export default function StudioPage() {
                 Still separating. The player appears here as soon as it is ready - no need to leave
                 this page.
               </p>
-              <Progress
-                value={job?.progress ?? 0}
-                label={job !== null ? stageLabel(job) : 'Waiting for the upload to finish'}
-                tone="success"
-              />
+              <Progress value={trip.percent} label={trip.label} tone="success" />
             </div>
           ) : succeeded ? (
             <div className="flex flex-col gap-4">
