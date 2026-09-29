@@ -54,34 +54,44 @@ depends on it, so the domain can be left until last.
 | | Stack | Reachable from | Use it for |
 |---|---|---|---|
 | `make dev` | development images, hot reload | `localhost:3000` | building and iterating |
-| `deploy.sh --local` | production images | `127.0.0.1:3000` | proving the real build works |
+| `deploy.sh --local` | production images | `127.0.0.1:8080` | proving the real build works |
 | `deploy.sh --tunnel` | production images | your domain | the actual deployment |
 
-`deploy.sh` with no flag starts the full production stack and publishes **no
-host ports** — `compose.prod.yaml` uses `expose:` throughout, so the tunnel is
-the only ingress and a misconfigured firewall cannot put Postgres on the
-internet. `--local` overlays loopback bindings for `web` and `api`
-(`compose.prod.local.yaml`); it binds `127.0.0.1` explicitly, because a plain
-`3000:3000` listens on every interface, which on college wifi means everyone on
-that network.
+Production configuration is **`.env.production`**, not `.env`. The development
+tools (`make dev`, `preview.sh`, a host-run API) read `.env`, and a production
+MinIO password there breaks them against the development store.
 
-**Firebase needs no console changes for either local mode.** `localhost` is on
-the authorized-domains list by default, and Google's OAuth flow is brokered by
-`<project>.firebaseapp.com` rather than by your host — so both email/password
-and Google sign-in work before a domain exists.
+A browser reaches exactly one service: **`edge`**, a Caddy proxy
+(`infra/docker/Caddyfile`) that sends `/v1/*` to the API, `/visiovox-media/*`
+to MinIO and everything else to the web app. The tunnel points at it; `--local`
+publishes it on `127.0.0.1:8080` (`compose.prod.local.yaml`) - loopback
+explicitly, because a plain `8080:8080` listens on every interface, which on
+college wifi means everyone on that network. Postgres, Redis and MinIO are also
+on loopback, at **15432 / 16379 / 19000**, for the GPU worker, which runs on the
+host (below); nothing else is published.
+
+Uploads and playback go browser-to-MinIO on presigned URLs. SigV4 signs the
+Host header, so the API signs them for the public origin
+(`S3_PUBLIC_ENDPOINT_URL`, set from `NEXT_PUBLIC_APP_URL`) and Caddy forwards
+that Host unchanged. A URL signed for `minio:9000` would be unreachable from a
+browser, and re-pointing it afterwards breaks the signature.
+
+**Firebase needs no console changes for `--local`.** `localhost` is on the
+authorized-domains list by default, and Google's OAuth flow is brokered by
+`<project>.firebaseapp.com` rather than by your host.
 
 Set the public URLs to match whichever you are running:
 
 ```bash
-# .env, for --local
-PUBLIC_API_URL=http://localhost:8000
-PUBLIC_MEDIA_BASE_URL=http://localhost:8000/media
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+# .env.production, for --local
+PUBLIC_API_URL=http://localhost:8080
+PUBLIC_MEDIA_BASE_URL=http://localhost:8080/media
+NEXT_PUBLIC_APP_URL=http://localhost:8080
 ```
 
 These are inlined at build time, so switching between local and the domain is a
-rebuild, not a restart. `deploy.sh` rebuilds every run, so changing `.env` and
-re-running is all it takes.
+rebuild, not a restart. `deploy.sh` rebuilds every run, so changing
+`.env.production` and re-running is all it takes.
 
 ### Domain and tunnel (one-time)
 
@@ -92,42 +102,77 @@ hostname back down that connection. Free, and it works behind CGNAT.
 One hostname serves app, API and media. That is deliberate: no CORS to
 configure, one certificate, and one entry in Firebase's authorized domains.
 
+**Live since 2026-09-28: `visiovox.dpdns.org`**, tunnel `visiovox`
+(`174b1b2d-…`). The domain is DigitalPlat FreeDomain: permanent, but it must be
+**renewed (free) within 120 days of expiry** - it expires 2027-09-28, so the
+window opens around 2027-05-31.
+
 **1. Get a domain — £0.** A named tunnel needs a zone on your Cloudflare
 account, so a `trycloudflare.com` quick tunnel will not do: its hostname is
 regenerated on every restart, and both Firebase's allow list and
 `NEXT_PUBLIC_APP_URL` (inlined at build time) would need changing each time.
+The parent must be on the Public Suffix List or Cloudflare will not take it as
+a zone.
 
-- [GitHub Student Developer Pack](https://education.github.com/pack) — verify
-  with the college address; includes a free Namecheap `.me` for a year.
-  Same-day.
-- `eu.org` is the fallback: free and permanent, but approval takes weeks.
+- [DigitalPlat FreeDomain](https://github.com/DigitalPlatDev/FreeDomain) -
+  `*.dpdns.org`, `*.qzz.io`, `*.us.kg`: free, instant, one per account. Chosen.
+- [GitHub Student Developer Pack](https://education.github.com/pack) - a
+  Namecheap `.me`, free for **one year only**, then paid; auto-renew off.
+- `eu.org` - free and permanent, but approval takes weeks to months.
 
 **2. Point it at Cloudflare.** Add the domain as a site on a free Cloudflare
-account, then set the two nameservers Cloudflare gives you at the registrar.
-Propagation is usually minutes; the dashboard says *Active* when it is done.
+account (no DNS records needed), then set the two nameservers Cloudflare gives
+you at the registrar. The dashboard says *Active* when it is done.
 
-**3. Create the tunnel.** Zero Trust → Networks → Tunnels → *Create a tunnel* →
-*Cloudflared*. Add a public hostname:
+**3. Create the tunnel.** Networking → Tunnels → *Create a tunnel* → Docker.
+The current dashboard will not continue until a connector has connected once,
+so start one with the token before the route step. Then add a published
+application route:
 
 | Field | Value |
 |---|---|
 | Subdomain | *(blank, for the apex)* |
-| Domain | `yourdomain.me` |
-| Service | `HTTP` → `web:3000` |
+| Domain | `yourdomain` |
+| Service URL | `http://edge:8080` |
 
-`web:3000` is the compose service name — cloudflared runs inside the same
-network, so it resolves. Copy the token.
+`edge` is the compose service name - cloudflared runs inside the same network,
+so it resolves.
 
-**4. Fill in `.env`.** Every `visiovox.example.com` becomes your hostname;
-`CLOUDFLARE_TUNNEL_TOKEN` gets the token. `deploy.sh` refuses to start while
-the placeholder is still there.
+**4. Save the token** to `secrets/cloudflare-tunnel-token.txt` (gitignored,
+mode 600). `deploy.sh --tunnel` reads it from there, and compose hands it to
+cloudflared as `TUNNEL_TOKEN` rather than on the command line. In
+`.env.production`, every `visiovox.example.com` becomes your hostname;
+`deploy.sh` refuses to start while the placeholder is still there.
 
 **5. Add the hostname to Firebase** — *Authentication → Settings → Authorized
 domains*. Skipping this is the failure that looks like a bug: the stack comes
 up healthy and every sign-in is rejected with `auth/unauthorized-domain`.
-`deploy.sh` prints the hostname it expects on the list each run.
+`deploy.sh` prints the hostname it expects on the list each run. (The service
+account can also do it: Identity Toolkit admin v2, `projects/<id>/config`,
+PATCH `authorizedDomains` - read the list first, it replaces the whole thing.)
 
-**6. Deploy.** `./infra/local/deploy.sh --tunnel`.
+**6. Install the GPU worker once** (it runs on the host, not in compose):
+
+```bash
+sudo cp infra/local/visiovox-worker-gpu.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable visiovox-worker-gpu
+```
+
+**7. Deploy.** `./infra/local/deploy.sh --tunnel`. It writes `.env.worker`
+(the loopback connection strings, derived from `.env.production`) and restarts
+the worker, so the two cannot drift apart.
+
+**8. Keep the distro running.** WSL stops the distro when nothing holds it
+open, and with it the whole site. A Windows logon task holding a `wsl.exe`
+session does it: *VisioVox keep-alive*, running
+`wsl.exe -d VisioVox --exec sleep infinity` through a hidden PowerShell. The
+containers and the worker restart on their own once the distro is up.
+
+**Known: the college network blocks the domain.** BMSCE's FortiGuard web filter
+answers for new domains with its own block page (and its own certificate, so
+HTTPS fails verification). The site is up - check from mobile data or an
+outside checker. Fix: submit the URL for rating at FortiGuard, or ask IT to
+allow it.
 
 ### Firebase Authentication (one-time, per project)
 

@@ -75,6 +75,13 @@ class Settings(BaseSettings):
 
     # --- object storage ---
     s3_endpoint_url: str = "http://localhost:9000"
+    # The origin a browser reaches the store through, used only to sign URLs.
+    # In production the store is `minio:9000` on the compose network, which no
+    # browser can resolve; the edge proxy serves the bucket path on the public
+    # hostname instead. SigV4 signs the Host header, so the URL has to be
+    # signed against the host the browser will actually send. Empty means the
+    # browser can reach s3_endpoint_url directly, as in development.
+    s3_public_endpoint_url: str = ""
     s3_region: str = "auto"
     s3_bucket: str = "visiovox-media"
     s3_access_key_id: str = "minioadmin"

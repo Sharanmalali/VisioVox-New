@@ -5,10 +5,18 @@
 # Cloudflare Tunnel makes it reachable over HTTPS without an open port, a static
 # IP, or anything that survives CGNAT.
 #
-#   docker compose -f infra/docker/compose.prod.yaml --project-directory . up -d
+#   docker compose -f infra/docker/compose.prod.yaml --project-directory . \
+#     --env-file .env.production up -d
 #
 # --project-directory matters: without it Compose takes infra/docker as the
-# project root and silently ignores the repo-root .env.
+# project root. Configuration lives in .env.production, not .env: the
+# development tools (make dev, preview.sh, the host-run API) read .env, and a
+# production password there breaks them against the development MinIO.
+#
+# The GPU worker runs on the host (see infra/local/visiovox-worker-gpu.service),
+# so Postgres, Redis and MinIO are also published on loopback-only ports for
+# it. They are offset from the development stack's 5432/6379/9000 so the two
+# can run side by side without a worker quietly joining the wrong one.
 name: visiovox-prod
 
 x-restart: &restart
@@ -20,60 +28,84 @@ services:
     <<: *restart
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-visiovox}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
       POSTGRES_DB: ${POSTGRES_DB:-visiovox}
+    # Under prod-data/, not the media root itself: the development MinIO
+    # already keeps its data in /srv/media/minio, and two servers sharing one
+    # data directory corrupt it.
     volumes:
-      - ${MEDIA_ROOT:-/srv/media}/postgres:/var/lib/postgresql/data
+      - ${MEDIA_ROOT:-/srv/media}/prod-data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-visiovox}']
       interval: 10s
       timeout: 5s
       retries: 10
-    # Never published. Only the compose network reaches the database; the
-    # tunnel exposes the web app and nothing else.
-    expose:
-      - '5432'
+    # Loopback only, for the host GPU worker. Never on a routable interface;
+    # the tunnel reaches the edge proxy and nothing else.
+    ports:
+      - '127.0.0.1:15432:5432'
 
   redis:
     image: redis:7-alpine
     <<: *restart
     command: ['redis-server', '--appendonly', 'yes']
     volumes:
-      - ${MEDIA_ROOT:-/srv/media}/redis:/data
+      - ${MEDIA_ROOT:-/srv/media}/prod-data/redis:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 3s
       retries: 10
-    expose:
-      - '6379'
+    # Loopback only: the host GPU worker's Celery broker.
+    ports:
+      - '127.0.0.1:16379:6379'
 
   minio:
     image: minio/minio:RELEASE.2024-10-13T13-34-11Z
     <<: *restart
     command: ['server', '/data', '--console-address', ':9001']
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env.production}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env.production}
     volumes:
-      - ${MEDIA_ROOT:-/srv/media}/minio:/data
+      - ${MEDIA_ROOT:-/srv/media}/prod-data/minio:/data
     healthcheck:
       test: ['CMD', 'mc', 'ready', 'local']
       interval: 10s
       timeout: 5s
       retries: 20
-    # Not published either. Media reaches browsers through presigned URLs the
-    # API issues, so the object store itself never needs to face the internet
-    # (ADR-0012: no public bucket access, ever).
-    expose:
-      - '9000'
+    # Browsers reach the bucket only through the edge proxy, and only with a
+    # presigned URL - there is no anonymous access (ADR-0012). The loopback
+    # port is for the host GPU worker, which uploads its artifacts here.
+    ports:
+      - '127.0.0.1:19000:9000'
+
+  # One-shot: the media bucket, private. Nothing else creates it, and without
+  # it the first upload fails with NoSuchBucket rather than at deploy time.
+  minio-init:
+    image: minio/mc:RELEASE.2024-10-08T09-37-26Z
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET:-visiovox-media}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY" >/dev/null
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+        mc anonymous set none "local/$$S3_BUCKET"
+    restart: 'no'
+    depends_on:
+      minio: { condition: service_healthy }
 
   api:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.api
     <<: *restart
-    env_file: [.env]
+    env_file: [.env.production]
     environment:
       ENVIRONMENT: production
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-visiovox}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-visiovox}
@@ -81,6 +113,9 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       S3_ENDPOINT_URL: http://minio:9000
+      # Presigned URLs are signed for the host the browser uses; the edge proxy
+      # serves the bucket path there. See infra/docker/Caddyfile.
+      S3_PUBLIC_ENDPOINT_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL in .env.production}
       MEDIA_ROOT: /srv/media
       MEDIA_WORK_DIR: /srv/media/work
       REQUIRE_DEDICATED_MEDIA_VOLUME: 'true'
@@ -98,6 +133,7 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       minio: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
     expose:
       - '8000'
 
@@ -105,7 +141,7 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.api
-    env_file: [.env]
+    env_file: [.env.production]
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-visiovox}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-visiovox}
     # Runs once per deploy and exits. Separate from the API so a migration
@@ -122,25 +158,45 @@ services:
       dockerfile: infra/docker/Dockerfile.web
       args:
         # Baked in at build time. See the Dockerfile.
-        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?set PUBLIC_API_URL in .env}
-        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:?set it in .env}
-        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:?set it in .env}
-        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:?set it in .env}
-        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:?set it in .env}
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:?set PUBLIC_API_URL in .env.production}
+        NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:?set it in .env.production}
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:?set it in .env.production}
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:?set it in .env.production}
+        NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:?set it in .env.production}
     <<: *restart
     depends_on:
       api: { condition: service_started }
     expose:
       - '3000'
 
+  # The one origin the tunnel points at: routes /v1 to the API, the bucket path
+  # to MinIO and everything else to the web app. See infra/docker/Caddyfile.
+  edge:
+    image: caddy:2.8.4-alpine
+    <<: *restart
+    volumes:
+      - ./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api: { condition: service_started }
+      web: { condition: service_started }
+      minio: { condition: service_healthy }
+    expose:
+      - '8080'
+
   tunnel:
     image: cloudflare/cloudflared:2024.12.2
     <<: *restart
     # Outbound only: no inbound port, no static IP, works behind CGNAT, and the
-    # TLS certificate is Cloudflare's problem rather than ours.
-    command: ['tunnel', '--no-autoupdate', 'run', '--token', '${CLOUDFLARE_TUNNEL_TOKEN}']
+    # TLS certificate is Cloudflare's problem rather than ours. The dashboard
+    # routes the hostname to http://edge:8080.
+    #
+    # The token arrives as TUNNEL_TOKEN rather than on the command line, where
+    # it would show in every process listing.
+    command: ['tunnel', '--no-autoupdate', 'run']
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in .env.production}
     depends_on:
-      web: { condition: service_started }
+      edge: { condition: service_started }
     profiles: ['tunnel']
 
 volumes: {}

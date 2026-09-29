@@ -28,7 +28,11 @@ Type=exec
 User=dmin
 Group=dmin
 WorkingDirectory=/home/dmin/visiovox/VisioVox-New
-EnvironmentFile=/home/dmin/visiovox/VisioVox-New/.env
+# Production settings, then the loopback connection strings deploy.sh derives
+# from them - later files win. Without .env.worker the worker would fall back
+# to localhost:6379 and quietly join the development stack's queue instead.
+EnvironmentFile=/home/dmin/visiovox/VisioVox-New/.env.production
+EnvironmentFile=/home/dmin/visiovox/VisioVox-New/.env.worker
 Environment=PATH=/home/dmin/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PIPELINE_MODE=real
 
@@ -53,7 +57,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/srv/media /home/dmin/visiovox/VisioVox-New
+ReadWritePaths=/srv/media /home/dmin/visiovox/VisioVox-New /home/dmin/.cache
 
 [Install]
 WantedBy=multi-user.target

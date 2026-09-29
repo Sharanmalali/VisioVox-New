@@ -1,0 +1,40 @@
+# Edge proxy (docs/track-w/W9): one origin for app, API and media.
+#
+# The tunnel delivers every request for the public hostname here. The browser
+# talks to three services, and all three must answer on that one hostname:
+#
+#   /v1/*               the API. The web bundle calls NEXT_PUBLIC_API_URL,
+#                       which is the public hostname, so without this route
+#                       every API call lands on Next and 404s.
+#   /visiovox-media/*   the object store. Uploads and playback use presigned
+#                       URLs signed for the public hostname (S3_PUBLIC_ENDPOINT_URL);
+#                       path-style, so the bucket is the first path segment.
+#   everything else     the web app.
+#
+# Same-origin by construction: no CORS on the store, and the upload client can
+# read each part's ETag without an Expose-Headers rule.
+#
+# Caddy forwards the Host header unchanged, which is what keeps the presigned
+# signatures valid - SigV4 signs the host the browser sent.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	handle /v1/* {
+		reverse_proxy api:8000 {
+			# Server-sent job events: flush each one as it arrives rather than
+			# buffering the stream.
+			flush_interval -1
+		}
+	}
+
+	handle /visiovox-media/* {
+		reverse_proxy minio:9000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}

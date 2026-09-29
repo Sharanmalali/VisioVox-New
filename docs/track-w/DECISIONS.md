@@ -140,3 +140,39 @@ verification at the boundary.
 lambda, so every request in a test arrived as a different person. It surfaced as
 a 404 on a project the test had just created — nowhere near the cause. Resolve
 once, before the closure.
+
+### 2026-09-28 — W9 · first real deployment: visiovox.dpdns.org
+
+W9 was marked done on "builds, starts and serves", but the first deploy to a
+real hostname found three gaps that no local run exercises. Each would have
+produced a healthy-looking stack that failed on the first upload.
+
+- **API calls had no route.** The web bundle calls `NEXT_PUBLIC_API_URL`, which
+  is the public hostname, and the tunnel pointed at `web:3000` only. Fixed with
+  an **edge proxy** (Caddy, `infra/docker/Caddyfile`): `/v1/*` → API,
+  `/visiovox-media/*` → MinIO, rest → web. The tunnel now targets `edge:8080`.
+  Chosen over path rules in the Cloudflare dashboard because it lives in the
+  repo, is reviewable, and `--local` exercises the same routing.
+- **Presigned URLs pointed at `minio:9000`.** Unreachable from a browser, and
+  SigV4 signs the Host header, so they cannot be rewritten afterwards. New
+  setting `S3_PUBLIC_ENDPOINT_URL`: the API signs browser-facing URLs for the
+  public origin; server-side calls keep the internal endpoint. Verified end to
+  end: a 1 MiB multipart PUT and a signed GET through the edge succeed, and the
+  same URL under another Host is refused (403).
+- **The host GPU worker could not reach the production data services** - all
+  were `expose:` only, so it would have fallen back to `localhost:6379` and
+  joined the *development* queue. They are now on loopback-only ports
+  (15432/16379/19000), and `deploy.sh` derives `.env.worker` every run.
+
+Also: production config moved to **`.env.production`** (the dev tools read
+`.env`); production data moved to `/srv/media/prod-data/` (the dev MinIO
+already owned `/srv/media/minio`, and two servers on one data directory corrupt
+it); a `minio-init` one-shot creates the private bucket; the tunnel token lives
+only in `secrets/cloudflare-tunnel-token.txt` and reaches cloudflared as
+`TUNNEL_TOKEN`; `deploy.sh`'s disk check measures the drive behind the sparse
+media image (it read 196 GB free on a drive with 43 GB).
+
+**Domain:** DigitalPlat FreeDomain, `visiovox.dpdns.org` - free with no
+renewal fee, unlike the Student Pack `.me` (one year). Renewal window opens
+~2027-05-31. **Known issue:** BMSCE's FortiGuard filter blocks the new domain on
+campus; it is reachable from everywhere else (verified from DE and PT).

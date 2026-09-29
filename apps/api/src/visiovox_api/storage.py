@@ -65,10 +65,18 @@ class ObjectStore:
         self._settings = settings
         self._session = aioboto3.Session()
 
-    def _client_kwargs(self) -> dict[str, Any]:
+    def _client_kwargs(self, *, for_browser: bool = False) -> dict[str, Any]:
+        """Client settings. `for_browser` signs against the public origin.
+
+        Signing makes no request, so a client pointed at an origin this process
+        cannot itself reach is fine for presigning and useless for anything else.
+        """
+        endpoint = self._settings.s3_endpoint_url
+        if for_browser and self._settings.s3_public_endpoint_url:
+            endpoint = self._settings.s3_public_endpoint_url
         return {
             "service_name": "s3",
-            "endpoint_url": self._settings.s3_endpoint_url,
+            "endpoint_url": endpoint,
             "region_name": self._settings.s3_region,
             "aws_access_key_id": self._settings.s3_access_key_id,
             "aws_secret_access_key": self._settings.s3_secret_access_key.get_secret_value(),
@@ -104,26 +112,30 @@ class ObjectStore:
                 ContentType=content_type,
             )
             upload_id = str(created["UploadId"])
-            parts = await self._presign(s3, key, upload_id, range(1, part_count + 1))
+        parts = await self._presign(key, upload_id, range(1, part_count + 1))
 
         return MultipartUpload(upload_id=upload_id, key=key, parts=parts)
 
     async def _presign(
-        self, s3: Any, key: str, upload_id: str, numbers: Iterable[int]
+        self, key: str, upload_id: str, numbers: Iterable[int]
     ) -> list[PresignedPart]:
+        wanted = list(numbers)
+        if not wanted:
+            return []
         parts: list[PresignedPart] = []
-        for n in numbers:
-            url = await s3.generate_presigned_url(
-                "upload_part",
-                Params={
-                    "Bucket": self._settings.s3_bucket,
-                    "Key": key,
-                    "UploadId": upload_id,
-                    "PartNumber": n,
-                },
-                ExpiresIn=self._settings.signed_url_ttl_seconds,
-            )
-            parts.append(PresignedPart(part_number=n, url=url))
+        async with self._session.client(**self._client_kwargs(for_browser=True)) as s3:
+            for n in wanted:
+                url = await s3.generate_presigned_url(
+                    "upload_part",
+                    Params={
+                        "Bucket": self._settings.s3_bucket,
+                        "Key": key,
+                        "UploadId": upload_id,
+                        "PartNumber": n,
+                    },
+                    ExpiresIn=self._settings.signed_url_ttl_seconds,
+                )
+                parts.append(PresignedPart(part_number=n, url=url))
         return parts
 
     async def presign_parts(
@@ -134,10 +146,7 @@ class ObjectStore:
         Also the resume path: a client returning after its URLs expired asks
         again for the parts it still needs, rather than restarting the upload.
         """
-        if not numbers:
-            return []
-        async with self._session.client(**self._client_kwargs()) as s3:
-            return await self._presign(s3, key, upload_id, numbers)
+        return await self._presign(key, upload_id, numbers)
 
     async def complete_multipart_upload(
         self, key: str, upload_id: str, parts: list[tuple[int, str]]
@@ -177,7 +186,7 @@ class ObjectStore:
         if download_as:
             safe = safe_filename(download_as)
             params["ResponseContentDisposition"] = f'attachment; filename="{safe}"'
-        async with self._session.client(**self._client_kwargs()) as s3:
+        async with self._session.client(**self._client_kwargs(for_browser=True)) as s3:
             url = await s3.generate_presigned_url(
                 "get_object",
                 Params=params,
