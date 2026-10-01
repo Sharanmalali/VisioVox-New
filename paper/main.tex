@@ -1,0 +1,478 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,backgrounds,calc,shapes.geometric}
+\usepackage[hidelinks]{hyperref}
+\usepackage{balance}
+\usepackage{xspace}
+\usepackage{array}
+
+\graphicspath{{figures/}}
+
+% Colours shared by the diagrams (Okabe-Ito, as in the plots).
+\definecolor{cblue}{HTML}{0072B2}
+\definecolor{cgreen}{HTML}{009E73}
+\definecolor{corange}{HTML}{E69F00}
+\definecolor{cpurple}{HTML}{CC79A7}
+\definecolor{csky}{HTML}{56B4E9}
+\definecolor{cred}{HTML}{D55E00}
+
+\newcommand{\sisdr}{\mathrm{SI\text{-}SDR}}
+\newcommand{\dB}{\,dB\xspace}
+
+\begin{document}
+
+\title{VisioVox: Audio-Visual Target-Speaker Extraction for Per-Speaker Listening in Overlapped Video, from Training to Zero-Cost Deployment}
+
+\author{\IEEEauthorblockN{Anonymous Authors}
+\IEEEauthorblockA{\textit{Affiliation withheld for review}}}
+
+\maketitle
+
+\begin{abstract}
+When several people talk at once in a recorded video, the soundtrack is often unusable: transcription tools label words but leave the audio mixed, and research separation models produce waveforms rather than something a person can listen to. We present VisioVox, an end-to-end system that turns an uploaded multi-speaker video into one switchable, loudness-matched audio track per visible speaker, each with word-aligned captions, played back in sync with the video in a browser. We first measure why window-wise blind separation is unsuitable for long recordings: on 72.7\,min of AMI meetings, naive stitching swaps speaker identity on 29.8\% of window transitions and returns tracks 10.7\dB worse than the unprocessed mixture. We then develop SEAVE, a 5.0\,M-parameter TF-GridNet-style target-speaker extractor with reliability-gated audio-visual conditioning and a suppression-first objective, trained by curriculum. On a reverberant, overlap-verified evaluation condition the room-simulated audio-only checkpoint achieves $+8.25$\dB SI-SDR improvement for two speakers, whereas a checkpoint fine-tuned on VoxCeleb2 that scores $+11.43$\dB on its own validation set falls to $-1.61$\dB, showing that in-domain validation can invert the ranking of deployable models. The deployed system serves a face-track-driven extractor (AV-MossFormer2) with timeline placement, voice-based track merging, Whisper captioning and synchronized multi-track playback on a single workstation at zero recurring cost; across 24 production jobs it processes video at a median 2.6$\times$ real time. We document the integration defects that only end-to-end testing exposed and state plainly which claims the current evidence does and does not support.
+\end{abstract}
+
+\begin{IEEEkeywords}
+target speaker extraction, audio-visual speech separation, cocktail party problem, domain shift, speech captioning, system deployment
+\end{IEEEkeywords}
+
+% ============================================================================
+\section{Introduction}
+% ============================================================================
+
+The cocktail-party problem~\cite{cherry1953}---following one voice among several---is easy for a listener in the room and hard for anyone listening to a recording. Overlapped speech is common in exactly the recordings people most want to revisit: meetings, interviews, panel discussions and classroom video. Existing tools address adjacent problems. Meeting transcribers attribute words to speakers but leave the audio mixed; music stem separators are not built for speech; and speech separation research~\cite{hershey2016deep,yu2017pit,luo2019convtasnet,subakan2021sepformer,wang2023tfgridnet} produces separated waveforms evaluated on fixed-length benchmark clips, not a product a person can use.
+
+Turning separation into such a product raises three problems that benchmark numbers do not expose. \emph{Identity over time:} a blind separator outputs sources in arbitrary order, so processing a long recording in windows and concatenating the outputs requires solving a permutation problem at every boundary. \emph{Domain shift:} a model selected on its own validation set may behave very differently on reverberant, partially overlapped, user-recorded audio. \emph{Integration:} a usable result needs every speaker's track aligned to the video, captions per speaker, and a player that can switch between tracks without drift---all delivered to an ordinary browser.
+
+This paper reports VisioVox, a working system built to address these problems, and the measurements made while building it. Our contributions are:
+\begin{enumerate}
+\item A measurement of the stitching failure of window-wise blind separation on real meetings (Section~\ref{sec:baseline}), which motivates target-speaker extraction (TSE)~\cite{zmolikova2023overview}, where output identity is bound to a conditioning cue by construction.
+\item SEAVE, a TF-GridNet-style~\cite{wang2023tfgridnet} TSE model with per-frame reliability-gated audio-visual conditioning and a suppression-first objective, trained by a curriculum from anechoic to room-simulated to audio-visual data (Section~\ref{sec:seave}).
+\item A product-condition evaluation that shows in-domain validation scores failing to predict deployed performance: the checkpoint with the highest in-domain score degrades audio on the target condition (Section~\ref{sec:results}).
+\item The VisioVox system: a face-track-driven AV-TSE stage, timeline placement and voice-based track merging, per-speaker captioning, and synchronized multi-track web playback, deployed at zero recurring cost, with latency measured on production jobs and the integration defects that end-to-end testing exposed (Sections~\ref{sec:system} and~\ref{sec:lessons}).
+\end{enumerate}
+We report what was measured, including results that went against the original design, and we separate those measurements from claims the evidence does not yet support (Section~\ref{sec:limits}).
+
+% ============================================================================
+\section{Related Work}
+% ============================================================================
+
+\textbf{Blind speech separation.} Deep clustering~\cite{hershey2016deep} and permutation-invariant training (PIT)~\cite{yu2017pit,kolbaek2017upit} made speaker-independent separation trainable by scoring the best output-to-source assignment. Time-domain models such as Conv-TasNet~\cite{luo2019convtasnet}, attention-based SepFormer~\cite{subakan2021sepformer}, MossFormer~\cite{zhao2023mossformer,zhao2024mossformer2} and the time-frequency TF-GridNet~\cite{wang2023tfgridnet} raised benchmark quality substantially. Utterance-level PIT fixes the assignment within a segment but not across independently processed segments, which is the failure we measure in Section~\ref{sec:baseline}.
+
+\textbf{Target-speaker extraction.} TSE conditions a network on a cue identifying the desired speaker, so the output is that speaker by construction~\cite{zmolikova2023overview}. Audio cues include a d-vector (VoiceFilter~\cite{wang2019voicefilter}), adaptive layers (SpeakerBeam~\cite{zmolikova2019speakerbeam}) and jointly trained speaker encoders (SpEx+~\cite{ge2020spexplus}). Speaker embeddings such as ECAPA-TDNN~\cite{desplanques2020ecapa} are a common enrolment representation.
+
+\textbf{Audio-visual separation.} Visual cues bind a voice to a face: Looking-to-Listen~\cite{ephrat2018looking} and The Conversation~\cite{afouras2018conversation} condition on face or lip embeddings; AV-ConvTasNet~\cite{wu2019avconvtasnet}, VisualVoice~\cite{gao2021visualvoice} and MuSE~\cite{pan2021muse} extend this to the time domain, cross-modal consistency, and joint visual and self-enrolled cues; Michelsanti~\textit{et al.}~\cite{michelsanti2021overview} survey the field. These works are evaluated mostly on curated data where the face is frontal and visible throughout. Our deployed extractor, AV-MossFormer2 from ClearerVoice-Studio~\cite{clearervoice}, conditions a MossFormer2 backbone~\cite{zhao2024mossformer2} on lip crops from detected face tracks.
+
+\textbf{From models to systems.} Captioning builds on large-scale ASR such as Whisper~\cite{radford2023whisper}, and diarization toolkits such as pyannote~\cite{bredin2020pyannote} answer ``who spoke when''. Neither yields separated audio. We are not aware of published work describing a deployed system that delivers switchable per-speaker audio synchronized to video with per-speaker captions, nor of studies reporting how such a system behaves outside benchmark conditions; this paper contributes one system and those measurements, not a survey of alternatives.
+
+% ============================================================================
+\section{Problem Formulation}
+% ============================================================================
+
+A recording contains $K$ speakers. With $s_k(t)$ the dry speech of speaker $k$, $h_k(t)$ the room impulse response to the microphone and $n(t)$ noise, the observed single-channel mixture is
+\begin{equation}
+y(t) = \sum_{k=1}^{K} (h_k * s_k)(t) + n(t).
+\label{eq:mixture}
+\end{equation}
+The video shows a subset of the speakers. For every visible speaker the system must return an estimate $\hat{s}_k(t)$ spanning the full recording, aligned sample-accurately to the video timeline, together with a word-timed transcript of $\hat{s}_k$.
+
+Quality is measured with scale-invariant SDR~\cite{leroux2019sdr},
+\begin{equation}
+\sisdr(\hat{s}, s) = 10\log_{10}\frac{\lVert \alpha s\rVert^2}{\lVert \alpha s - \hat{s}\rVert^2},\quad
+\alpha = \frac{\hat{s}^\top s}{\lVert s\rVert^2},
+\label{eq:sisdr}
+\end{equation}
+on zero-mean signals, reported as the improvement over returning the mixture unchanged, $\mathrm{SI\text{-}SDRi} = \sisdr(\hat{s}, s) - \sisdr(y, s)$. A negative SI-SDRi therefore means the system made the audio worse than doing nothing.
+
+% ============================================================================
+\section{Preliminary Study: Why Not Blind Separation}
+\label{sec:baseline}
+% ============================================================================
+
+We first tested the simplest design: run a pretrained two-source blind separator (SepFormer, WHAMR!-trained, 16\,kHz~\cite{subakan2021sepformer}) over 4\,s windows with 2\,s hop and concatenate the outputs. Material was three AMI meetings~\cite{carletta2005ami} from three recording sites (ES2002a, IS1000a, TS3003a; 72.7\,min in total), whose per-participant headset microphones provide reference signals; the mixture is their sum.
+
+Before trusting any number, the evaluation harness was validated against a published result: SepFormer on Libri2Mix~\cite{cosentino2020librimix} (8\,kHz, \textit{min}, \textit{mix\_clean}, all 3000 test items) measured 20.58\dB SI-SDRi (95\% CI [20.48, 20.67]) against the published 20.60\dB.
+
+For each window, outputs are matched to references by SI-SDR with the Hungarian algorithm~\cite{kuhn1955hungarian}; the \emph{permutation rate} is the fraction of consecutive scored windows whose mapping changes. Windows without two simultaneously active speakers carry no ordering information and are skipped. Over 1123 scored windows the mapping changed on 334 transitions, a pooled rate of \textbf{29.8\%} (per meeting 23.9--34.7\%, Fig.~\ref{fig:baseline}a). Naively stitched tracks scored $-10.70$\dB SI-SDRi on average, while an oracle that assigns and rescales each window with the reference reached $+2.55$\dB from the \emph{same} separator output (Fig.~\ref{fig:baseline}b). Most of the 13.25\dB gap came from per-window scale and polarity, which SI-SDR-based matching cannot see but overlap-add exposes.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{baseline_permutation.pdf}
+\caption{Window-wise blind separation on AMI. (a) Fraction of window transitions whose output-to-speaker mapping changes (95\% CI). (b) SI-SDRi of naive stitching versus an oracle assignment of the identical separator output.}
+\label{fig:baseline}
+\end{figure}
+
+The separator is not the bottleneck; stitching is. A TSE model avoids both identity and gain continuity problems because every window is conditioned on the same speaker cue and there is one output per speaker. This result fixed the architecture: \emph{extract one speaker at a time, conditioned on a persistent identity cue}.
+
+A second finding shaped the visual front end. A placeholder active-speaker detector based on lip-region motion energy, evaluated on AMI close-up video against headset activity, showed no diagonal structure in its face-to-voice agreement matrix (largest value 0.080). In the process we found that AMI's camera-to-headset mapping cannot be assumed: only 53 of about 171 meetings follow the naive \texttt{Closeup}$_{n+1}$/\texttt{Headset}$_n$ pairing, and our builder now reads the published mapping from the corpus metadata.
+
+% ============================================================================
+\section{SEAVE: A Reliability-Gated Extractor}
+\label{sec:seave}
+% ============================================================================
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  x=1mm, y=1mm,
+  font=\scriptsize,
+  box/.style={draw, rounded corners=1pt, align=center, minimum height=5mm, inner sep=1.5pt, fill=white, text width=28mm},
+  sub/.style={draw, rounded corners=1pt, align=center, minimum height=4.3mm, inner sep=1pt, fill=white, text width=28mm},
+  cue/.style={draw, rounded corners=1pt, align=center, inner sep=1.5pt, text width=20mm},
+  gate/.style={draw, rounded corners=1pt, align=center, inner sep=1.2pt, fill=white, minimum height=4.3mm},
+  op/.style={draw, circle, inner sep=0.4pt, fill=white},
+  arr/.style={-{Stealth[length=1.5mm]}, semithick},
+  lab/.style={font=\scriptsize, text=black!70}
+]
+% ---- audio path, top to bottom (x = 0) ----
+\node[box] (y) at (0,0) {mixture $y$ (16\,kHz)};
+\node[box] (stft) at (0,-8) {STFT, 512 / hop 128};
+\node[box] (enc) at (0,-16) {Conv2d $2\!\rightarrow\!D$, $D{=}128$};
+\node[sub] (intra) at (0,-27) {intra-frame BLSTM (freq.)};
+\node[sub] (inter) at (0,-32.5) {inter-frame BLSTM (time)};
+\node[sub] (mhsa) at (0,-38) {full-band self-attention};
+\node[sub, fill=cgreen!14] (film) at (0,-43.5) {FiLM: $\gamma(c_t)\odot\bar{h}_t+\delta(c_t)$};
+\node[sub, fill=cpurple!16] (xatt) at (0,-49) {$+\,\beta_t\cdot\mathrm{Attn}(\bar{h},V)$};
+\begin{scope}[on background layer]
+\node[draw, dashed, rounded corners=2pt, fill=cblue!5, inner sep=1.4mm, fit=(intra)(xatt)] (blk) {};
+\end{scope}
+\node[lab, anchor=south west] at (blk.north west) {block $\times\,6$};
+\node[box] (dec) at (0,-61) {Conv2d $D\!\rightarrow\!2$ (complex spec.)};
+\node[box] (istft) at (0,-69) {iSTFT $\rightarrow\ \hat{s}_k$};
+\draw[arr] (y) -- (stft);
+\draw[arr] (stft) -- (enc);
+\draw[arr] (enc) -- (blk);
+\draw[arr] (blk) -- (dec);
+\draw[arr] (dec) -- (istft);
+% ---- conditioning, side by side on the right ----
+\node[cue, fill=corange!16] (e) at (30,-4) {speaker cue $e$\\ECAPA, 192-d};
+\node[cue, fill=csky!18] (v) at (54,-4) {lip features $v_t$\\ResNet-18, 512-d\\25$\,\rightarrow\,$125\,Hz};
+\node[gate] (ga) at (30,-17) {$\times\,\alpha$};
+\node[gate] (gv) at (54,-17) {$\times\,\beta_t$};
+\node[op] (sum) at (42,-24) {$+$};
+\draw[arr] (e) -- node[lab, right] {$W_a e$} (ga);
+\draw[arr] (v) -- node[lab, right] {$W_v v_t$} (gv);
+\draw[arr] (ga) |- (sum);
+\draw[arr] (gv) |- (sum);
+\draw[arr] (sum) |- node[lab, pos=0.3, right] {$c_t$} (film.east);
+\draw[arr, dashed] (v.east) -- ++(2.5,0) |- node[lab, pos=0.88, above] {$V$} (xatt.east);
+\end{tikzpicture}
+\caption{SEAVE. Six TF-GridNet-style blocks map the mixture spectrogram directly to the target's. A conditioning vector $c_t$ mixes a speaker embedding and lip features through learned reliability gates $\alpha$ (per utterance) and $\beta_t$ (per frame) and modulates every block by FiLM; $\beta_t$ also scales a cross-attention from audio to visual features $V$.}
+\label{fig:seave}
+\end{figure}
+
+\subsection{Architecture}
+SEAVE (Fig.~\ref{fig:seave}) follows TF-GridNet~\cite{wang2023tfgridnet}. The mixture is transformed by an STFT (512-point Hann window, hop 128, 16\,kHz; 257 bins at 125 frames/s), real and imaginary parts are stacked, and a $3{\times}3$ convolution embeds them into $H\in\mathbb{R}^{D\times T\times F}$ with $D=128$. Each of six blocks applies, with residual connections,
+\begin{align}
+H &\leftarrow H + P_f\big(\mathrm{BLSTM}_f(\mathrm{GN}(H))\big), \label{eq:intra}\\
+H &\leftarrow H + P_t\big(\mathrm{BLSTM}_t(\mathrm{GN}(H))\big), \label{eq:inter}\\
+H &\leftarrow H + \mathrm{MHSA}\big(\mathrm{LN}(\bar{H})\big)\otimes \mathbf{1}_F, \label{eq:attn}
+\end{align}
+where $\mathrm{BLSTM}_f$ runs across frequency at each frame, $\mathrm{BLSTM}_t$ across time at each frequency~\cite{hochreiter1997lstm}, $\bar{H}=\frac{1}{F}\sum_f H_{:,:,f}$ is the frequency-pooled sequence and MHSA is four-head self-attention~\cite{vaswani2017attention}. The inter-frame path is the reason for the backbone: speaker identity is a long-horizon property, and a model without such a path must re-decide whom it follows at every frame.
+
+\subsection{Reliability-gated conditioning}
+Real uploads contain head turns, occlusions and off-screen speakers; a visual cue that is wrong for two seconds should be ignored for those two seconds only. Given a speaker embedding $e\in\mathbb{R}^{192}$ with confidence $\rho_a$ and per-frame visual features $v_t\in\mathbb{R}^{512}$ with confidences $\rho_{v,t}$,
+\begin{align}
+\alpha &= \sigma\big(g_a(\rho_a)\big), \qquad \beta_t = \sigma\big(g_v(\rho_{v,t})\big), \label{eq:gates}\\
+c_t &= \alpha\,W_a e + \beta_t\,W_v v_t + b, \label{eq:cond}
+\end{align}
+where $g_a,g_v$ are small learned maps (1--16--1, SiLU) and $c_t\in\mathbb{R}^{256}$. After each block the pooled features are modulated by FiLM~\cite{perez2018film}, $m_t=\gamma(c_t)\odot\bar{h}_t+\delta(c_t)$, initialised to the identity; when video is present, $m_t \leftarrow m_t + \beta_t\,\mathrm{Attn}(\mathrm{LN}(m_t), V, V)$, so the gate scales the attention \emph{output} and removes an unreliable visual contribution rather than merely redistributing attention. The change $m_t-\bar{h}_t$ is broadcast back over frequency. Conditioning at every block rather than once at the input counters dilution of the speaker request through depth. A decoder convolution produces the complex spectrogram of the target directly (no mask), followed by an inverse STFT; a small head predicts an utterance-level confidence. The model has 5.02\,M parameters; the visual front end (a 3D convolution over five frames followed by a ResNet-18~\cite{he2016resnet} trunk on $96{\times}96$ grayscale lip crops, 512-d at 25\,fps) adds 11.46\,M.
+
+During audio-visual training, modality dropout zeroes or corrupts each cue per item (visual drop 0.20, audio-cue drop 0.15, visual corruption 0.25, audio-cue corruption 0.15) and lowers its confidence accordingly, so that the gates learn to recognise an unreliable cue rather than being told.
+
+\subsection{Suppression-first objective}
+SI-SDR penalises all error equally, but residual interference (another person talking) is far more objectionable to a listener than mild artefacts. The loss combines
+\begin{equation}
+\mathcal{L} = \mathcal{L}_{\sisdr} + 0.5\,\mathcal{L}_{\mathrm{sup}} + 0.2\,\mathcal{L}_{\mathrm{cons}} + 0.3\,\mathcal{L}_{\mathrm{MR}} + 0.5\,\mathcal{L}_{\mathrm{sil}},
+\label{eq:loss}
+\end{equation}
+with $\mathcal{L}_{\sisdr}=-\sisdr(\hat{s},s)$; a hinged interference penalty $\mathcal{L}_{\mathrm{sup}}=\frac{1}{J}\sum_j \max(0,\tau+\sisdr(\hat{s},s_j))$ over interferers $s_j$ with $\tau=20$\dB, which stops pushing once leakage is $\tau$\dB below the output so that it cannot be satisfied by distorting the target; a multi-resolution STFT term~\cite{yamamoto2020pwg} (FFT sizes 512, 1024, 2048; spectral convergence plus log-magnitude $\ell_1$); and a silence term
+\begin{equation}
+\mathcal{L}_{\mathrm{sil}} = \frac{\mathbb{E}_{t\notin\mathcal{A}}[\,\lVert\hat{s}_t\rVert^2]}{\mathbb{E}_{t\in\mathcal{A}}[\,\lVert\hat{s}_t\rVert^2]},
+\label{eq:silence}
+\end{equation}
+the output energy in frames where the target is inactive relative to frames where it is active ($\mathcal{A}$), which targets the 50--70\% of a conversation in which each speaker is silent and leakage is unmasked. The speaker-consistency term $\mathcal{L}_{\mathrm{cons}}$ (cosine distance between embeddings of output and enrolment) is implemented but was inactive in every run reported here, as the training logs show it at zero; we therefore make no claim about it.
+
+\subsection{Curriculum}
+\label{sec:curriculum}
+Training proceeded in stages, each initialised from the last (Table~\ref{tab:training}). C1 learns separation on Libri2Mix~\cite{cosentino2020librimix} (16\,kHz, \textit{min}, train-100 and train-360 of LibriSpeech~\cite{panayotov2015librispeech}) with WHAM! noise~\cite{wichern2019wham} introduced partway through. C3 keeps the speakers and objective but builds realistic mixtures: image-source~\cite{allen1979image} room responses via pyroomacoustics~\cite{scheibler2018pyroomacoustics} (rooms $3{\times}3{\times}2.4$ to $10{\times}8{\times}3.5$\,m, RT60 log-uniform in 0.15--0.8\,s, reflection order 12), turn-taking rather than uniform overlap, per-speaker level spread, noise at 5--25\dB SNR, and a lossy codec round trip half the time. C2 adds the visual path on VoxCeleb2~\cite{chung2018voxceleb2} audio-visual mixtures built from the 118-speaker test split with speaker-disjoint validation. All stages use AdamW~\cite{loshchilov2019adamw} (weight decay 0.01), linear warm-up for 500 steps then cosine decay, gradient clipping at 5, bf16 autocast and gradient checkpointing~\cite{chen2016checkpoint}, on one NVIDIA RTX A5000 (24\,GB). A dataloader benchmark sustained 295 items/s and 97.5\% GPU utilisation for a realistically sized model.
+
+\begin{table}[t]
+\centering
+\caption{Training stages (values read from the checkpoints and run logs)}
+\label{tab:training}
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lllrrr@{}}
+\toprule
+Stage & Data & Init. & Steps & LR & Best val. \\
+\midrule
+C1 & Libri2Mix + WHAM! & --- & 60k & $1.5{\times}10^{-4}$ & 8.34\dB$^a$ \\
+C3 & + room simulation & C1 & 30k & $8{\times}10^{-5}$ & 10.92\dB$^b$ \\
+C2 v2 & VoxCeleb2 AV & C3 & 12k & $6{\times}10^{-5}$ & 11.43\dB$^c$ \\
+\bottomrule
+\multicolumn{6}{@{}p{0.95\columnwidth}@{}}{\footnotesize $^a$Libri2Mix dev. $^b$Room-simulated Libri2Mix dev. $^c$VoxCeleb2 held-out speakers, audio-visual; 11.02\dB with only the audio cue and 11.02\dB with only the visual cue at the same step.}
+\end{tabular}
+\end{table}
+
+% ============================================================================
+\section{The VisioVox System}
+\label{sec:system}
+% ============================================================================
+
+\begin{figure*}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  box/.style={draw, rounded corners=1.5pt, align=center, minimum height=8.5mm, minimum width=22mm, inner sep=2pt, fill=white},
+  arr/.style={-{Stealth[length=1.7mm]}, semithick},
+  darr/.style={{Stealth[length=1.7mm]}-{Stealth[length=1.7mm]}, semithick},
+  grp/.style={draw, dashed, rounded corners=3pt},
+  lab/.style={font=\scriptsize, text=black!65, align=center, fill=white, inner sep=1pt}
+]
+\node[box, fill=csky!15] (browser) at (0,0) {Browser\\Studio $\cdot$ Player};
+\node[box, fill=black!4] (fb) at (0,1.9) {Firebase Auth\\(sign-in, ID token)};
+\node[box, fill=corange!12] (cf) at (3.3,0) {Cloudflare\\TLS + tunnel};
+\node[box] (edge) at (6.6,0) {Edge proxy\\(Caddy)};
+\node[box] (web) at (9.7,1.35) {Web app\\(Next.js)};
+\node[box] (api) at (9.7,0) {API (FastAPI)\\verifies tokens};
+\node[box] (minio) at (9.7,-1.35) {Object store\\(MinIO, S3)};
+\node[box] (redis) at (12.8,0) {Job queue\\(Redis/Celery)};
+\node[box] (pg) at (12.8,1.35) {PostgreSQL};
+\node[box, fill=cpurple!14] (worker) at (16.0,0) {GPU worker\\(host, systemd)};
+\node[box, fill=cpurple!6] (tse) at (16.0,1.35) {AV-MossFormer2\\runner (own env)};
+\node[box, fill=cgreen!8] (asr) at (16.0,2.6) {Whisper large-v3\\+ ECAPA};
+
+\begin{scope}[on background layer]
+\node[grp, fit=(edge)(web)(api)(minio)(redis)(pg), inner sep=3.5mm] (compose) {};
+\node[grp, fit=(compose)(worker)(tse)(asr), inner sep=3mm] (host) {};
+\end{scope}
+\node[lab, anchor=south west, fill=none] at (compose.north west) {Docker Compose (loopback-only host ports)};
+\node[lab, anchor=south east, fill=none] at (host.north east) {single workstation: RTX A5000 24\,GB, WSL2};
+
+\draw[darr] (browser) -- node[lab, above=1pt] {HTTPS} (cf);
+\draw[darr] (cf) -- node[lab, above=1pt] {tunnel} (edge);
+\draw[arr] (edge.north) |- node[lab, pos=0.75, above] {/} (web.west);
+\draw[arr] (edge) -- node[lab, above=1pt] {/v1} (api);
+\draw[arr] (edge.south) |- node[lab, pos=0.75, below] {/bucket (presigned)} (minio.west);
+\draw[arr] (api) -- node[lab, above=1pt] {enqueue} (redis);
+\draw[arr] (api.north east) -- (pg.south west);
+\draw[arr] (redis) -- node[lab, above=1pt] {consume} (worker);
+\draw[arr] (worker) -- (tse);
+\draw[arr] (tse) -- (asr);
+\draw[darr] (worker.south) |- node[lab, pos=0.75, below] {artifacts} (minio.east);
+\draw[arr, dashed] (browser) -- node[lab, right=1pt] {sign in} (fb);
+\end{tikzpicture}}
+\caption{Deployment. Every component runs on one workstation. The browser reaches a single public origin through a Cloudflare tunnel; an edge proxy routes \texttt{/v1} to the API, the bucket path to the object store (uploads and playback use URLs presigned for the public host) and everything else to the web app. The API verifies Firebase ID tokens and enqueues jobs by task name; the GPU worker runs on the host and reaches the data services on loopback ports.}
+\label{fig:arch}
+\end{figure*}
+
+\subsection{Overview and deployment}
+Fig.~\ref{fig:arch} shows the deployed system. Recurring cost is zero: the workstation that trained the models serves them, a Cloudflare tunnel provides HTTPS without a public IP or open port, the domain is a free subdomain, and authentication uses Firebase's free tier. Uploads go from the browser directly to the S3-compatible object store via multipart presigned URLs (16\,MiB parts, resumable). Because SigV4 signs the \texttt{Host} header, URLs are signed for the public origin and the edge proxy forwards that host unchanged. The API never imports worker code; it sends jobs by task name, and a GPU worker with concurrency one consumes them, so a second upload queues rather than contending for GPU memory.
+
+\subsection{Processing pipeline}
+The serving pipeline (Fig.~\ref{fig:pipeline}) replaced SEAVE with AV-MossFormer2~\cite{clearervoice} for the reasons discussed in Section~\ref{sec:discussion}. Its stages are:
+
+\begin{figure}[t]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  st/.style={draw, rounded corners=1.5pt, minimum width=17mm, minimum height=7mm, align=center, fill=white},
+  note/.style={font=\scriptsize, align=left, text width=50mm, anchor=west},
+  arr/.style={-{Stealth[length=1.6mm]}, thick}
+]
+\node[st, fill=black!5] (up) {Upload};
+\node[st, below=3.5mm of up] (s0) {S0 Ingest};
+\node[st, below=3.5mm of s0, fill=cpurple!14] (s5) {S5 AV-TSE};
+\node[st, below=3.5mm of s5, fill=csky!16] (s3) {S3 Fuse};
+\node[st, below=3.5mm of s3, fill=cgreen!12] (s7) {S7 Captions};
+\node[st, below=3.5mm of s7, fill=corange!14] (s9) {S9 Package};
+\node[st, below=3.5mm of s9, fill=black!5] (pl) {Player};
+\foreach \a/\b in {up/s0, s0/s5, s5/s3, s3/s7, s7/s9, s9/pl} \draw[arr] (\a) -- (\b);
+\node[note, right=3mm of up] {multipart, presigned, resumable};
+\node[note, right=3mm of s0] {sandboxed probe; 16\,kHz mono WAV; H.264 25\,fps};
+\node[note, right=3mm of s5] {shot cuts, S$^3$FD faces, tracking, lip crops; one extraction per face track};
+\node[note, right=3mm of s3] {offset by cross-correlation; drop silent faces; merge tracks by ECAPA voice; order left to right};
+\node[note, right=3mm of s7] {Whisper large-v3, word timestamps, per speaker};
+\node[note, right=3mm of s9] {$-16$\,LUFS, AAC 128\,kb/s; WebVTT, JSON; original mix; manifest};
+\node[note, right=3mm of pl] {one AudioContext; 80\,ms equal-power switch};
+\end{tikzpicture}}
+\caption{Serving pipeline. A speaker is a face track: the extractor is conditioned on lip movement, and S3 turns per-track outputs into one full-length track per person.}
+\label{fig:pipeline}
+\end{figure}
+
+\textbf{S0 Ingest.} The upload is probed in a sandbox before any decoding and normalised into a 16\,kHz mono analysis WAV and a constant-25\,fps H.264 video (8-bit 4:2:0 with the index first, so the same file is browser-playable). An upload without video is refused with an explanation, since the extractor requires faces.
+
+\textbf{S5 Audio-visual extraction.} A separate process in the extractor's own environment detects shot boundaries, runs the S$^3$FD face detector~\cite{zhang2017s3fd} on every frame, links detections into face tracks, crops lip regions and runs AV-MossFormer2 once per track over that track's span of the analysis WAV. It returns, per track $i$, its frame span $[f_i^{s}, f_i^{e})$, mean horizontal position and the separated waveform $\hat{s}_i$.
+
+\textbf{S3 Fusion: from face tracks to people.} Per-track outputs cover only the frames in which a face was visible and are counted on the extractor's own re-encoded timeline. Let $a$ be the analysis waveform and $r$ the extractor's input waveform. The container offset is estimated, never assumed, as
+\begin{equation}
+\ell^{*} = \arg\max_{|\ell|\le L}\Big|\sum_{t} r(t+\ell)\,a(t)\Big|,
+\label{eq:lag}
+\end{equation}
+over the first 60\,s with $L$ = 1\,s, and track $i$ is placed at sample $640 f_i^{s}-\ell^{*}$ on a zero-initialised full-length buffer (640 samples per video frame at 16\,kHz). We observed $\ell^{*}=1105$ samples (69.1\,ms) when the extractor's audio came from an AAC container and $\ell^{*}=0$ once it was fed the analysis WAV directly. A track is discarded as a non-speaking face if
+\begin{equation}
+20\log_{10}\frac{\mathrm{RMS}(\hat{s}_i[\mathcal{T}_i])}{\mathrm{RMS}(a[\mathcal{T}_i])} < -30\,\mathrm{dB},
+\label{eq:silent}
+\end{equation}
+over its span $\mathcal{T}_i$. A camera cut or lost detection splits one person into several tracks, so tracks that never overlap in time and whose ECAPA~\cite{desplanques2020ecapa} embeddings of active speech satisfy $\cos(e_i,e_j)>0.6$ are merged; tracks that overlap in time are never merged, since one face cannot be on screen twice. Speakers are numbered left to right. The extractor reports no confidence, so each speaker is labelled with the fraction of the recording in which its face was tracked---an upper bound on how complete its track can be. The overlap ratio shown to the user is measured on the separated tracks as the share of active frames (energy above $-30$\dB relative to the track's 95th-percentile frame) in which two or more speakers are active.
+
+\textbf{S7 Captions.} Each separated track, never the mixture, is transcribed by Whisper large-v3~\cite{radford2023whisper} (faster-whisper~\cite{fasterwhisper}, float16) with word timestamps, so captions reflect what was recovered.
+
+\textbf{S9 Packaging and playback.} Tracks are loudness-normalised to $-16$\,LUFS (ITU-R BS.1770~\cite{itu1770}), encoded as AAC, and shipped with WebVTT~\cite{webvtt} and word-level JSON captions, the unprocessed mixture as an ``original mix'' track, the video, and a manifest. The player decodes all tracks into one Web Audio~\cite{webaudio} context and switches speakers with an 80\,ms equal-power crossfade. Audio-video drift below 40\,ms is left alone, drift between 40 and 250\,ms is removed by trimming the playback rate by at most 0.4\%, and larger jumps re-anchor the clocks; the active speaker's captions are highlighted word by word (Fig.~\ref{fig:ui}). Projects longer than 10\,min or with more than four tracks are flagged for HLS~\cite{rfc8216}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.93\columnwidth]{ui_studio.png}\\[1mm]
+\footnotesize (a) Studio during processing\\[1.5mm]
+\includegraphics[width=0.93\columnwidth]{ui_player.png}\\[1mm]
+\footnotesize (b) Player, speaker~2 selected (video blurred for this paper)
+\caption{Production interface, captured by the end-to-end browser test. (a) The progress bar, checklist and activity feed are derived from one state model and report only real events. (b) Per-speaker tracks with tracked-face coverage, the original mix, and word-highlighted captions of the selected speaker.}
+\label{fig:ui}
+\end{figure}
+
+\textbf{Communicating progress.} Processing takes tens of seconds to minutes, so the interface maps pipeline stages onto five customer-facing steps (upload, prepare video, separate speakers, add captions, ready) and drives the progress bar, checklist, status line and a timestamped activity feed from a single state model; nothing advances on a timer. Progress arrives over server-sent events with a polling fallback.
+
+% ============================================================================
+\section{Experiments and Results}
+\label{sec:results}
+% ============================================================================
+
+\subsection{Training behaviour}
+Fig.~\ref{fig:training} shows validation SI-SDRi during each stage. C1 reached 8.34\dB on Libri2Mix dev. C3, initialised from C1 and evaluated on room-simulated dev mixtures (a harder distribution), reached 10.92\dB at step 27k. On VoxCeleb2, C2 v2 reached 11.43\dB with both cues; the audio-only and visual-only paths reached 11.02\dB each, so on this data the visual cue added about 0.4\dB over the voice embedding alone.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{training_curves.pdf}
+\caption{Validation SI-SDRi during training. Each stage is validated on its own development data, so the panels are not on a common scale.}
+\label{fig:training}
+\end{figure*}
+
+\subsection{Product-condition evaluation}
+Each validation set in Fig.~\ref{fig:training} measures something adjacent to the deployed task. Libri2Mix has overlap but no room; AMI has rooms, but measured properly contains little simultaneous speech (across ten meetings, one 4\,s window had two people both clearly talking), so averaging over it scores a separator on audio that needs no separation. We therefore built the condition directly: real speech from Libri2Mix dev, simulated rooms with the C3 simulator, a requested overlap of 30--70\%, and items discarded unless the overlap measured on the reverberant sources is at least 25\%. Items are generated from a fixed seed, so every model sees identical mixtures (181 two-speaker and 200 three-speaker items; measured overlap 31\% and 36\%; mixture SI-SDR $+0.36$ and $-3.99$\dB). Confidence intervals are bootstrap 95\% intervals~\cite{efron1993bootstrap}. The test is audio-only, so the audio-visual models are evaluated through their audio-cue path.
+
+\begin{table}[t]
+\centering
+\caption{SI-SDRi (dB) on the product condition}
+\label{tab:product}
+\setlength{\tabcolsep}{2.2pt}
+\footnotesize
+\input{tables/product.tex}
+\end{table}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{product_condition.pdf}
+\caption{(a) SI-SDRi on the product condition (bootstrap 95\% CI). (b) Each model's best in-domain validation score against its two-speaker product score: the ordering is not preserved.}
+\label{fig:product}
+\end{figure*}
+
+Table~\ref{tab:product} and Fig.~\ref{fig:product} show the result. C3 is the only model that holds up: $+8.25$\dB (95\% CI [7.41, 9.14]) with two speakers and $+6.34$\dB with three. The checkpoint with the best in-domain score, C2 v2 ($+11.43$\dB on VoxCeleb2), scores $-1.61$\dB---it makes the audio worse than doing nothing---and the anechoic C1 scores $-2.09$\dB. C2 v1, trained for fewer steps on VoxCeleb2, falls in between ($+2.49$\dB). The pattern is a dose-response: the further a model trains on data without room acoustics, the more of the robustness learned in C3 it loses, and its in-domain score rises while it does so. Model selection on in-domain validation would have shipped the worst model. Subsequent C2 runs therefore blend room-simulated LibriMix into half of the micro-batches and select checkpoints on the minimum of in-domain and product-condition scores.
+
+\subsection{Deployed extractor on overlapped video}
+Because the product condition is audio-only, it cannot assess a lip-driven extractor. As a first audio-visual check we built three 6\,s test videos, each placing two different VoxCeleb2 test-set speakers side by side (224$\times$224 per face) over a mixture at 0\dB relative level with full overlap, and ran AV-MossFormer2 through the S5 runner. Table~\ref{tab:moss} reports the six extracted tracks after the container offset was removed: mean SI-SDRi $+9.43$\dB (range $+5.67$ to $+12.57$), with each output at $-18$ to $-34$\dB SI-SDR against the other speaker, i.e., the correct person was extracted every time. This is a small, favourable test and is not comparable with Table~\ref{tab:product}; Section~\ref{sec:limits} lists what it does not show.
+
+\begin{table}[t]
+\centering
+\caption{AV-MossFormer2 on synthetic two-face overlapped videos (SI-SDR, dB). ``Leak'' is SI-SDR of the output against the other speaker.}
+\label{tab:moss}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\input{tables/avmossformer2.tex}
+\end{table}
+
+\subsection{Latency in production}
+Fig.~\ref{fig:latency} and Table~\ref{tab:latency} report all 24 successful jobs processed by the deployed system during development and acceptance testing: seven distinct videos of 6.0--32.2\,s, from 448$\times$224 to 1920$\times$3414, every one yielding two speakers. The median real-time factor (job time over video duration) was 2.62 (mean 3.38, range 1.81--8.17). The AV-TSE stage accounted for 72\% of job time on average. High-resolution phone videos (1080p and above) ran at a real-time factor of 5.4--8.0, against 2.1--4.0 for videos of 1280$\times$720 or below, where the highest value belongs to the shortest (6\,s) clip and reflects fixed per-job cost; S5 runs face detection on every frame at the source resolution, which we expect to account for most of this difference, although its share of S5 was not measured separately. Captioning took 3--27\,s per job.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{latency.pdf}
+\caption{Production latency. (a) End-to-end job time against video duration for 24 jobs, with real-time-factor guides. (b) Mean time per stage for each distinct video.}
+\label{fig:latency}
+\end{figure*}
+
+\begin{table}[t]
+\centering
+\caption{Production jobs: mean stage and total times}
+\label{tab:latency}
+\setlength{\tabcolsep}{3.4pt}
+\footnotesize
+\input{tables/latency.tex}
+\end{table}
+
+% ============================================================================
+\section{Lessons from End-to-End Validation}
+\label{sec:lessons}
+% ============================================================================
+
+Unit and integration tests passed throughout, yet the first browser-driven end-to-end test (sign in, upload, process, play, captions) against the production stack failed in ways no lower-level test could reach. Table~\ref{tab:defects} lists the defects it exposed, all now fixed and guarded by tests. They share a cause: in development every package was installed in one environment and ran as one user, and the reference pipeline's output had only ever been consumed by tests, while the player had only ever consumed mock output.
+
+\begin{table}[t]
+\centering
+\caption{Defects exposed only by end-to-end testing}
+\label{tab:defects}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.53\columnwidth}>{\raggedright\arraybackslash}p{0.41\columnwidth}@{}}
+\toprule
+Defect & Visible symptom \\
+\midrule
+API container user could not read the identity-provider key & every signed-in request failed (HTTP 500) \\
+API imported worker packages absent from its image & uploads accepted, never processed \\
+Presigned URLs signed for the internal storage host & uploads unreachable from browsers \\
+Extractor fell back to CPU when \texttt{nvidia-smi} was off the service \texttt{PATH} & device-mismatch crash \\
+Real manifest lacked the original-mix track and video & player failed to load \\
+Caption JSON in a shape the player silently ignored & captions generated but never shown \\
+Progress reported as a percentage, scaled by 100 again & bar full at the first update \\
+Auth state read before session restore & ``401'' on opening a saved project \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two practices proved decisive. Measuring rather than assuming offsets and identities (Eq.~\eqref{eq:lag}; the AMI camera mapping) prevented silent misalignment that would otherwise have surfaced as poor quality with no visible cause. And testing the deployed artefact through a real browser found more defects in one session than all earlier testing combined.
+
+% ============================================================================
+\section{Discussion}
+\label{sec:discussion}
+% ============================================================================
+
+\textbf{Why the deployed model is not SEAVE.} SEAVE's audio-visual checkpoints were trained on 118 speakers and lost robustness to rooms (Table~\ref{tab:product}); its best robust checkpoint, C3, is audio-only and conditions on an enrolment embedding that must first be mined from the recording by diarization. The placeholder motion-energy active-speaker detector carried no usable signal (Section~\ref{sec:baseline}), so binding voices to faces for SEAVE's visual path was not yet possible. AV-MossFormer2 couples face tracking with lip-conditioned extraction, removing both dependencies, and produced correct speaker identity on every test track. The switch is an engineering decision on present evidence, not a claim that it is the better separator on the product condition, which remains unmeasured for it.
+
+\textbf{What the evaluation shows.} The clearest result is methodological: in-domain validation inverted the ranking of models on the deployed condition, and an evaluation condition built to match the product, with overlap verified rather than assumed, was needed to see it. The visual cue added about 0.4\dB on VoxCeleb2 for SEAVE, a thin margin that should not be generalised.
+
+% ============================================================================
+\section{Limitations and Future Work}
+\label{sec:limits}
+% ============================================================================
+
+\begin{itemize}
+\item \textbf{Evaluation of the deployed extractor} rests on six tracks from three synthetic VoxCeleb2 videos. Its training data is described only as large-scale open-source data, so overlap with VoxCeleb2 cannot be ruled out. A reverberant audio-visual product condition, and a same-input comparison with C3, are needed.
+\item \textbf{Product-condition speakers} come from Libri2Mix dev, which was also used, in different mixtures, to select SEAVE checkpoints; the comparison between models is fair, but absolute numbers may be optimistic.
+\item \textbf{No perceptual or caption-accuracy study.} We report SI-SDRi only; no listening test, word error rate or hallucination rate was measured on separated tracks.
+\item \textbf{Visibility.} Speech while a face is off-screen is not recovered, and audio-only uploads are refused.
+\item \textbf{Scale.} One GPU worker processes one job at a time; long recordings fall back to Web Audio playback because HLS output is not yet produced by the real pipeline.
+\item \textbf{Data lifecycle.} Account and project deletion currently only marks records; a purge job for stored media remains to be built, which matters for a system that stores faces and voices.
+\end{itemize}
+Future work follows directly: an audio-visual product condition, a learned active-speaker detector to enable SEAVE's visual path on real video, continued training with blended corpora and min-of-domains selection, and listening tests.
+
+% ============================================================================
+\section{Conclusion}
+% ============================================================================
+
+VisioVox turns a video in which people talk over each other into switchable per-speaker audio with captions, synchronized in a browser, and runs at zero recurring cost on the workstation that trained its models. Along the way we measured that window-wise blind separation scrambles identity on 29.8\% of transitions in real meetings, that a reliability-gated TSE model trained with room simulation holds $+8.25$\dB on a verified-overlap reverberant condition, and that the checkpoint with the best in-domain score made audio worse on that condition. The broader lesson is that a separation system is validated by the condition it will serve and by the artefact users will touch, not by the benchmark on which it was trained.
+
+% Column break before reference 34, so the two columns of the last page balance.
+\IEEEtriggeratref{34}
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

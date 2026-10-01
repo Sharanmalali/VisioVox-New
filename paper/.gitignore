@@ -1,0 +1,13 @@
+# LaTeX build products (main.pdf is kept)
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+build.log
+# Raw screenshots: the player capture shows unblurred faces. Only the
+# blurred crops in figures/ are committed.
+data/screens/
