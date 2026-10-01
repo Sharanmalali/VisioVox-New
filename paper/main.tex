@@ -31,9 +31,31 @@
 
 \title{VisioVox: Audio-Visual Target-Speaker Extraction for Per-Speaker Listening in Overlapped Video, from Training to Zero-Cost Deployment}
 
-\author{\IEEEauthorblockN{Harini S, Samarth P, Sharan Malali, Shreyas S, Syed Ayaan}
-\IEEEauthorblockA{\textit{Dept. of Information Science and Engineering, B.M.S. College of Engineering}, Bengaluru, India\\
-\{harinis.ise, samarthp.is23, sharanmalali.is23, shreyass.is23, syedayaan.is23\}@bmsce.ac.in}}
+% One block per author, three on the first row and two on the second.
+\makeatletter
+\newcommand{\linebreakand}{%
+  \end{@IEEEauthorhalign}\hfill\mbox{}\par
+  \mbox{}\hfill\begin{@IEEEauthorhalign}}
+\makeatother
+\newcommand{\bmsce}{\textit{Dept. of Information Science}\\ \textit{and Engineering}\\
+  \textit{B.M.S. College of Engineering}\\ Bengaluru, India}
+
+\author{%
+\IEEEauthorblockN{Harini S}
+\IEEEauthorblockA{\bmsce\\ harinis.ise@bmsce.ac.in}
+\and
+\IEEEauthorblockN{Samarth P}
+\IEEEauthorblockA{\bmsce\\ samarthp.is23@bmsce.ac.in}
+\and
+\IEEEauthorblockN{Sharan Malali}
+\IEEEauthorblockA{\bmsce\\ sharanmalali.is23@bmsce.ac.in}
+\linebreakand
+\IEEEauthorblockN{Shreyas S}
+\IEEEauthorblockA{\bmsce\\ shreyass.is23@bmsce.ac.in}
+\and
+\IEEEauthorblockN{Syed Ayaan}
+\IEEEauthorblockA{\bmsce\\ syedayaan.is23@bmsce.ac.in}
+}
 
 \maketitle
 
@@ -471,8 +493,8 @@ Future work follows directly: an audio-visual product condition, a learned activ
 
 VisioVox turns a video in which people talk over each other into switchable per-speaker audio with captions, synchronized in a browser, and runs at zero recurring cost on the workstation that trained its models. Along the way we measured that window-wise blind separation scrambles identity on 29.8\% of transitions in real meetings, that a reliability-gated TSE model trained with room simulation holds $+8.25$\dB on a verified-overlap reverberant condition, and that the checkpoint with the best in-domain score made audio worse on that condition. The broader lesson is that a separation system is validated by the condition it will serve and by the artefact users will touch, not by the benchmark on which it was trained.
 
-% Column break before reference 34, so the two columns of the last page balance.
-\IEEEtriggeratref{34}
+% Column break before reference 30, so the two columns of the last page balance.
+\IEEEtriggeratref{30}
 \bibliographystyle{IEEEtran}
 \bibliography{references}
 
