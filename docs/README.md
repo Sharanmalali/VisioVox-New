@@ -99,6 +99,7 @@ Complete documentation set. Start with the reading paths below rather than readi
 | 26 | [Workstation as built](./26-workstation-as-built.md) | Pre-flight results, WSL2 setup, verified GPU baseline, what the smoke test found |
 | 27 | [Phase 1 baseline report](./27-phase1-baseline-report.md) | ⭐ Tier 0 measured on AMI · permutation-error rate · the empirical test of ADR-0001 |
 | 28 | [Product Delivery Plan](./28-product-delivery-plan.md) | ⭐ Track W · what is built vs specified · phases W1–W9 to a deployable product |
+| 29 | [AMI-AV evaluation](./29-ami-av-evaluation.md) | ⭐ The deployed system on 30 real meetings · visibility, identity, overlap SI-SDRi · caption WER and why per-track captions needed ADR-0017 |
 
 ---
 

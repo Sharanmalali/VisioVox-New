@@ -12,7 +12,7 @@ All timings are integer milliseconds at the API boundary (invariant 2).
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -148,8 +148,17 @@ def transcribe(
     model: Transcriber,
     language: str | None = None,
     beam_size: int = 5,
+    *,
+    vad_filter: bool = False,
+    condition_on_previous_text: bool = True,
 ) -> tuple[Transcript, StageResult]:
-    """Transcribe one speaker stream with word-level timings."""
+    """Transcribe one stream with word-level timings.
+
+    `vad_filter` defaults off for callers that have already decided where
+    speech is. The real pipeline transcribes the whole mixture, with the VAD on
+    and without conditioning on previous text: the configuration measured on
+    AMI-AV (scripts/bench_ami_seat.py).
+    """
     t0 = time.perf_counter()
     result = StageResult(stage=STAGE, status=StageStatus.OK)
 
@@ -158,7 +167,8 @@ def transcribe(
         language=language,
         beam_size=beam_size,
         word_timestamps=True,
-        vad_filter=False,  # S2A already decided where speech is
+        vad_filter=vad_filter,
+        condition_on_previous_text=condition_on_previous_text,
     )
 
     segments: list[Segment] = []
@@ -199,3 +209,72 @@ def transcribe(
     result.seconds = time.perf_counter() - t0
     result.detail = f"{len(segments)} segments, lang={transcript.language}"
     return transcript, result
+
+
+# --------------------------------------------------------------------------
+# One copy of each word, in the right person's captions
+# --------------------------------------------------------------------------
+
+
+def deduplicate_across(
+    transcripts: list[Transcript], streams: np.ndarray, mixture: np.ndarray
+) -> list[Transcript]:
+    """Drop words that are another person's speech leaking into this track.
+
+    Per-track transcription alone does not work on real meetings: every track
+    keeps the room a few dB down and Whisper writes that cross-talk down, so
+    each person's captions contain most of the meeting. On 10 held-out AMI-AV
+    meetings this put words under the right face with 110 % error; with the
+    duplicates removed, 78 % - while under heavy overlap, where transcribing
+    the mixture once loses one speaker entirely, it keeps per-track accuracy
+    (paper Sec. VII; scripts/bench_ami_dedup.py, check_overlap_captions.py).
+
+    `streams` are the people's tracks on the mixture's timeline, in the same
+    order as `transcripts`.
+    """
+    from .word_dedup import deduplicate
+
+    words = [
+        [(w.start_ms / 1000, w.end_ms / 1000, w.text) for seg in t.segments for w in seg.words]
+        for t in transcripts
+    ]
+    keep = deduplicate(words, streams, mixture, normalise=_match_key())
+    return [_keep_words(t, flags) for t, flags in zip(transcripts, keep, strict=True)]
+
+
+def _match_key() -> Callable[[str], str] | None:
+    """Whisper's English normaliser when installed (what was measured), else None."""
+    try:
+        from whisper_normalizer.english import EnglishTextNormalizer
+    except ImportError:
+        return None
+    normaliser = EnglishTextNormalizer()
+    return lambda text: str(normaliser(text)).strip()
+
+
+def _keep_words(transcript: Transcript, flags: list[bool]) -> Transcript:
+    out = Transcript(
+        segments=[],
+        language=transcript.language,
+        language_probability=transcript.language_probability,
+    )
+    i = 0
+    for seg in transcript.segments:
+        if not seg.words:
+            out.segments.append(seg)
+            continue
+        kept = [w for w, ok in zip(seg.words, flags[i : i + len(seg.words)], strict=True) if ok]
+        i += len(seg.words)
+        if len(kept) == len(seg.words):
+            out.segments.append(seg)
+        elif kept:
+            out.segments.append(
+                Segment(
+                    text="".join(w.text for w in kept).strip(),
+                    start_ms=kept[0].start_ms,
+                    end_ms=kept[-1].end_ms,
+                    words=tuple(kept),
+                    no_speech_prob=seg.no_speech_prob,
+                )
+            )
+    return out

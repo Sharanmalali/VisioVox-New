@@ -245,11 +245,26 @@ def run_pipeline(
                 from pipeline import s7_transcribe
 
                 transcriber = s7_transcribe.load_transcriber(device=settings.torch_device)
-                for track in tracks:
-                    # Invariant 6: the FAITHFUL track is what gets transcribed.
-                    # Captions must reflect what was recovered, not what a
-                    # generative model found plausible.
-                    transcript, _ = s7_transcribe.transcribe(track.faithful, transcriber)
+                # Invariant 6: the FAITHFUL track is what gets transcribed.
+                # Captions must reflect what was recovered, not what a
+                # generative model found plausible. VAD on and no conditioning
+                # on previous text: the configuration measured on AMI-AV.
+                transcripts = [
+                    s7_transcribe.transcribe(
+                        track.faithful,
+                        transcriber,
+                        vad_filter=True,
+                        condition_on_previous_text=False,
+                    )[0]
+                    for track in tracks
+                ]
+                # Each track also carries the others' speech a few dB down, and
+                # Whisper writes it down: the same words then appear under
+                # several faces. Keep each such word only where it belongs.
+                if len(tracks) > 1:
+                    streams = np.stack([t.faithful[: len(audio)] for t in tracks])
+                    transcripts = s7_transcribe.deduplicate_across(transcripts, streams, audio)
+                for track, transcript in zip(tracks, transcripts, strict=True):
                     track.transcript = transcript
             except Exception as exc:
                 logger.warning("transcription unavailable: %s", exc)

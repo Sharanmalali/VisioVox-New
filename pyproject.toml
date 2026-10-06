@@ -32,6 +32,9 @@ ml = [
   "fast-bss-eval>=0.1.4",
   "pyarrow>=18.0",
   "pyroomacoustics>=0.8",
+  # Speaker-attributed ASR scoring (scripts/bench_ami_asr.py)
+  "meeteval>=0.4.3",
+  "whisper-normalizer>=0.1.15",
 ]
 
 [tool.uv.sources]
@@ -141,7 +144,7 @@ module = ["torch.*", "torchaudio.*", "speechbrain.*", "pyannote.*",
           "faster_whisper.*", "soundfile.*", "librosa.*", "df.*",
           "nara_wpe.*", "silero_vad.*", "cv2.*", "onnxruntime.*",
           "pyloudnorm.*", "insightface.*", "torchmetrics.*", "fast_bss_eval.*", "pandas.*",
-          "pesq.*", "pystoi.*", "pyroomacoustics.*", "soxr.*", "aioboto3.*", "botocore.*",
+          "pesq.*", "pystoi.*", "meeteval.*", "whisper_normalizer.*", "pyroomacoustics.*", "soxr.*", "aioboto3.*", "botocore.*",
           "celery.*", "sse_starlette.*", "firebase_admin.*",
           "defusedxml.*"]
 ignore_missing_imports = true
