@@ -135,7 +135,10 @@ ROW = re.compile(
 
 
 def parse_product() -> dict[str, dict[int, dict[str, float]]]:
-    text = (DATA / "eval-product.log").read_text() + (DATA / "eval-diagnostic.log").read_text()
+    text = "".join(
+        (DATA / name).read_text()
+        for name in ("eval-product.log", "eval-diagnostic.log", "eval-c2v3.log")
+    )
     blocks = re.split(r"#{8} ", text)[1:]
     out: dict[str, dict[int, dict[str, float]]] = {}
     for b in blocks:
@@ -151,26 +154,33 @@ def parse_product() -> dict[str, dict[int, dict[str, float]]]:
 
 def fig_product() -> dict[str, dict[int, dict[str, float]]]:
     prod = parse_product()
-    order = ["C1", "C3", "C2 v1", "C2 v2"]
-    colours = [C["grey"], C["green"], C["sky"], C["purple"]]
+    # C2 v3 is the checkpoint its pre-declared rule selected (best.pt, the
+    # step maximising min(in-domain, product-val)); its later last.pt scores
+    # higher here but was not selected, so it is reported in the text only.
+    prod["C2 v3"] = prod.pop("C2 v3 best")
+    order = ["C1", "C3", "C2 v1", "C2 v2", "C2 v3"]
+    colours = [C["grey"], C["green"], C["sky"], C["purple"], C["orange"]]
     # In-domain validation score each model was selected on (its own dev set).
+    v3 = load_log("c2-v3")
+    v3_selected = max(v3, key=lambda r: min(r["val_si_sdri"], r["product"]))
     indomain = {
         "C1": max(r["val_si_sdri"] for r in load_log("c1")),
         "C3": max(r["val_si_sdri"] for r in load_log("c3")),
         "C2 v1": max(r["val_si_sdri"] for r in load_log("c2-v1-noPretrain")),
         "C2 v2": max(r["val_si_sdri"] for r in load_log("c2-v2")),
+        "C2 v3": v3_selected["val_si_sdri"],
     }
     fig, (a, b) = plt.subplots(
         1, 2, figsize=(FULL, 1.95), constrained_layout=True, gridspec_kw={"width_ratios": [1.35, 1]}
     )
-    width = 0.19
+    width = 0.16
     xs = np.arange(2)
     for i, (name, col) in enumerate(zip(order, colours, strict=True)):
         means = [prod[name][k]["mean"] for k in (2, 3)]
         lo = [prod[name][k]["mean"] - prod[name][k]["lo"] for k in (2, 3)]
         hi = [prod[name][k]["hi"] - prod[name][k]["mean"] for k in (2, 3)]
         a.bar(
-            xs + (i - 1.5) * width,
+            xs + (i - 2) * width,
             means,
             width,
             yerr=[lo, hi],
@@ -183,7 +193,7 @@ def fig_product() -> dict[str, dict[int, dict[str, float]]]:
     a.axhline(0, color="black", lw=0.6)
     a.set_xticks(xs, ["2 speakers ($n$=181)", "3 speakers ($n$=200)"])
     a.set_ylabel("SI-SDRi (dB), 95% CI")
-    a.legend(frameon=False, ncol=4, loc="upper right", columnspacing=0.8, handlelength=1.2)
+    a.legend(frameon=False, ncol=5, loc="upper right", columnspacing=0.6, handlelength=1.0)
     a.set_ylim(-5.5, 11.5)
     a.grid(True, axis="y")
     a.set_title("(a) Product condition (reverberant, verified overlap)")

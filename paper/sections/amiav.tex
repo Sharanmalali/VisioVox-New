@@ -1,0 +1,43 @@
+% ============================================================================
+\section{Real Meetings: the AMI-AV Evaluation}
+\label{sec:amiav}
+% ============================================================================
+
+Table~\ref{tab:moss} tests whether the deployed extractor follows the right lips in a favourable synthetic setting. This section measures what it, and the system around it, does on real recordings.
+
+\subsection{Benchmark construction}
+AMI~\cite{carletta2005ami} records each participant twice---a close-up camera on the face and a close-talking headset---which makes a real multi-speaker video with per-speaker ground truth possible without simulation. For each of 30 meetings we take the 120\,s window with the most simultaneous speech after the first minute, tile the four close-ups into one 2$\times$2 video (704$\times$576, 25\,fps) using AMI's published channel-to-camera mapping, and pair it with the sum of the four headsets. Ten TNO meetings (TS3003a--TS3012a) are held out; the 20 Edinburgh and Idiap meetings are used only where a parameter must be fitted. Nothing is simulated except the tiling: participants turn away, look down, walk to the whiteboard and pass in front of other cameras.
+
+Three corrections were needed, each measured before it was made. (i)~\emph{Who is speaking} comes from AMI's hand-corrected word alignments ($\pm$50\,ms), not headset energy: some headsets sit near $-55$\,dBFS and carry the room within 5\dB of their wearer, and an energy detector reported 47\,s of speech for a participant who says nothing in the window. (ii)~\emph{Levels}: headset gains differ by up to 30\dB within a meeting, so each headset is scaled to $-26$\,dBFS active speech before summing. (iii)~\emph{References}: a headset whose level while only others speak is within 10\dB of its wearer's speech, or whose wearer speaks for under 2\,s, is not used as a signal reference (81 of 114 speakers remain). The rule was fixed before any system was scored; visibility, identity and word-error measures need no headset and use every participant. Audio-video synchrony was verified (extraction quality peaks at zero offset). Each system runs exactly as deployed, and each person it finds is assigned to a seat by where their face lies in the grid---never by which output scores best, which would hide identity errors.
+
+\subsection{The extractor on real meetings}
+Table~\ref{tab:amiav} summarises AV-MossFormer2 through stages S5 and S3 on all 30 meetings. Where the face is visible it helps on real overlapped speech: $+3.48$\dB SI-SDRi over the frames in which the speaker and someone else are both inside aligned words. But 14.4\% of all speech is spoken while the speaker's face is not tracked (20 of 114 speakers are covered for under 90\% of their speech, six never), the 120 seats yield 152 people because tracks of one person are not always merged, and when its own person is silent an output is only 3.8\dB below the mixture. Whole-clip STOI~\cite{taal2011stoi} falls from 0.65 to 0.54. PESQ is not reported: ITU-T P.862 is specified for 8--12\,s samples, not two-minute conversations.
+
+\begin{table}[t]
+\centering
+\caption{AV-MossFormer2 (S5+S3) on 30 AMI-AV meetings. SI-SDRi (dB) with 95\% bootstrap intervals.}
+\label{tab:amiav}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\input{tables/ami_av.tex}
+\end{table}
+
+\subsection{Who said what}
+Captions are what the product promises beyond audio, so they are scored against AMI's manual transcript. cpWER~\cite{watanabe2020chime6} (computed with MeetEval~\cite{vonneumann2023meeteval}) pairs each system's word streams with participants in whichever way minimises errors; it rewards a diarizer's anonymous but consistent clusters. VisioVox must put each caption under the right \emph{face}, so we also report seat-attributed WER (saWER): the stream for seat $k$ is scored against the person in seat $k$, with no free permutation. All systems use the deployed Whisper large-v3 (beam 5, Silero VAD on, no conditioning on previous text) and Whisper's English normaliser. Table~\ref{tab:captions} gives results on the ten held-out meetings.
+
+\begin{table}[t]
+\centering
+\caption{Captions on the 10 held-out AMI-AV meetings: pooled WER (\%) with 95\% bootstrap intervals over meetings; Ins.\ = insertions. $^\dagger$plain WER, no speakers. $^\ddagger$equal-level close-talk headsets.}
+\label{tab:captions}
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\input{tables/ami_captions.tex}
+\end{table}
+
+\textbf{Per-track transcription fails, and not because of separation quality.} Transcribing each person's track---the design deployed until this evaluation---places words under the right face with 110\% error, most of it insertions: every track keeps the room a few decibels down, and Whisper transcribes it, so each face is captioned with most of the meeting. Transcribing each \emph{close-talk headset} the same way is worse still (122.5\% cpWER, 104.7\% insertions), although bleed in those channels sits 13--25\dB below the wearer. No separator can be expected to leak less than a close-talk microphone; the remedy has to be in how words are attributed.
+
+\textbf{Cross-track deduplication.} Cross-talk and genuine overlap leave different traces in the per-track transcripts: cross-talk is the \emph{same} word appearing in several tracks at the same moment, genuine overlap is \emph{different} words. We therefore keep every word that appears in one track only, and for a word that recurs across tracks---identical normalised text, midpoints within 0.5\,s, a rule fixed before scoring---keep only the copy in the track that retains most of the mixture's energy over it, $\arg\max_k \frac{1}{|W|}\sum_{t\in W} 10\log_{10}\bar{E}(s_k)(t)/\bar{E}(x)(t)$, with $s_k$ track $k$, $x$ the mixture, $W$ the word's frames and $\bar{E}$ short-term energy smoothed over 50\,ms (fitted on the 20 fitting meetings). On the held-out meetings this lowers saWER from 110.2\% to 78.1\% (paired difference $-32.1$ points, 95\% CI $[-39.0, -24.6]$) and cpWER to 68.7\%, statistically indistinguishable from pyannote~3.1~\cite{bredin2020pyannote,plaquet2023powerset} with Whisper on the mixture ($+7.5$ points, $[-8.8, +23.4]$). On the 20 fitting meetings pyannote is clearly better (40.4\% against 63.5\% cpWER), so we do not claim parity with audio-only diarization in general; the system's distinguishing property is that every word is bound to a visible face, which a diarizer alone cannot provide.
+
+\textbf{Why not transcribe once?} Transcribing the mixture once and giving each word to the track that retains it is tied with deduplication on AMI ($+1.5$ points saWER, $[-1.6, +4.6]$). On the three heavily overlapped two-face videos of Table~\ref{tab:moss}, scored against Whisper on each clean source (a consistency check, not an absolute WER), it fails: 67.0\% WER against 4.5\% for per-track transcription and 5.4\% with deduplication, because Whisper on the mixture transcribes one voice and the other speaker's words are lost. Deduplication is therefore what the deployed S7 now does; it was verified end to end through the public site.
+
+\textbf{What did not help.} Three further designs were measured and are not deployed. \emph{Cross-stream arbitration}---gating each track to frames where its energy share is within a margin of the largest share, with margin, floor, smoothing and hold fitted on the fitting meetings---raised frame-level speaking-activity F1 from 0.383 to 0.453 and cut per-track cpWER from 96.3\% to 80.4\%, but on the audio tracks it did not reduce leakage ($+0.28$\dB, $[-0.16, +1.11]$) and lowered STOI by 0.12 $[0.09, 0.14]$. \emph{Off-screen gap filling} with SEAVE C3, enrolled from the person's own visible stretches (cosine 0.53 to an oracle voice print), raised whole-clip STOI by 0.033 $[0.013, 0.059]$ but was worse than passing the mixture in the hidden stretches themselves ($-5.0$ against $+3.5$\dB SI-SDR, 11 speakers) and did not improve captions (78.3\% saWER). \emph{Naming pyannote's clusters by face}, each cluster given to the track that retains most of its speech, was 12.3 points worse in saWER than deduplication $[4.6, 19.7]$. An oracle that knows who said each word of the mixture transcript reaches 45.1\%: attribution, not separation, is where the remaining error lies.

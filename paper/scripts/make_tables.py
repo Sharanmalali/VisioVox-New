@@ -31,6 +31,7 @@ rows = [
     ("C3", "+ room sim.", "C3"),
     ("C2 v1", "VoxCeleb2, 8k", "C2 v1"),
     ("C2 v2", "VoxCeleb2, 12k", "C2 v2"),
+    ("C2 v3", "blended, 4.5k", "C2 v3"),
 ]
 
 

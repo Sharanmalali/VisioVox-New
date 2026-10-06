@@ -1,0 +1,18 @@
+\begin{tabular}{@{}lccr@{}}
+\toprule
+System & saWER (\%) & cpWER (\%) & Ins. \\
+\midrule
+Whisper, mixture$^\dagger$ & -- & 31.1 {\scriptsize[27.0, 34.5]} & -- \\
+pyannote + Whisper & -- & 61.2 {\scriptsize[48.0, 77.0]} & 12.1 \\
+Per-headset$^\ddagger$ & -- & 122.5 {\scriptsize[97.1, 147.8]} & 104.7 \\
+\midrule
+Per-track (before) & 110.2 {\scriptsize[93.1, 129.7]} & 96.1 {\scriptsize[87.1, 104.4]} & 57.3 \\
+\textbf{+ dedup (deployed)} & 78.1 {\scriptsize[63.7, 94.4]} & 68.7 {\scriptsize[59.9, 76.7]} & 16.7 \\
+\midrule
++ dedup, SEAVE fill & 78.3 {\scriptsize[63.7, 94.2]} & 69.7 {\scriptsize[59.9, 79.3]} & 19.2 \\
+Transcribe once & 76.6 {\scriptsize[64.4, 90.6]} & 66.1 {\scriptsize[59.5, 73.1]} & -- \\
+pyannote, by face & 90.5 {\scriptsize[77.1, 105.7]} & 75.2 {\scriptsize[63.8, 88.3]} & -- \\
+\midrule
+Oracle attribution & 45.1 {\scriptsize[39.3, 49.9]} & 45.1 {\scriptsize[39.3, 49.9]} & -- \\
+\bottomrule
+\end{tabular}
