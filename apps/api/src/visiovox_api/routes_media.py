@@ -34,10 +34,12 @@ from sse_starlette.sse import EventSourceResponse
 from . import audit, jobqueue, problems, quotas, uploads
 from .config import Settings, get_settings
 from .deps import CurrentUser, OwnedProject, OwnedProjectSSE, SessionDep, SettingsDep
+from .languages import CAPTION_LANGUAGES
 from .models import Job, UploadSession
 from .ratelimit import RULES, RateLimiter, client_ip, enforce
 from .redis_client import get_redis
 from .schemas import (
+    LanguageOption,
     LimitsResponse,
     UploadCompleteRequest,
     UploadInitRequest,
@@ -87,6 +89,10 @@ async def get_limits(
         available_bytes=await uploads.available_bytes(session, settings),
         reserved_bytes=await uploads.reserved_bytes(session),
         quotas=await quotas.snapshot(session, user.id, settings),
+        caption_languages=[
+            LanguageOption(code=lang.code, name=lang.name, native=lang.native, group=lang.group)
+            for lang in CAPTION_LANGUAGES
+        ],
     )
 
 

@@ -211,6 +211,7 @@ def _project_response(p: Project) -> ProjectResponse:
         status=p.status,
         duration_ms=p.duration_ms,
         has_video=p.has_video,
+        language=p.language,
         speaker_count=p.speaker_count,
         overlap_ratio=p.overlap_ratio,
         difficulty=p.difficulty,
@@ -253,7 +254,9 @@ async def create_project(
             return replay.body
 
     try:
-        project = Project(user_id=user.id, title=body.title, status="pending")
+        project = Project(
+            user_id=user.id, title=body.title, status="pending", language=body.language
+        )
         session.add(project)
         await session.commit()
     except Exception:

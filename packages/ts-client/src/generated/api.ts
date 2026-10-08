@@ -476,6 +476,11 @@ export interface components {
         /** CreateProjectRequest */
         CreateProjectRequest: {
             /**
+             * Language
+             * @description Spoken language for captions, a code from /v1/limits `caption_languages`; omit or null to detect automatically
+             */
+            language?: string | null;
+            /**
              * Rights Attested
              * @description User confirms they may process this recording
              */
@@ -568,6 +573,23 @@ export interface components {
             warnings: string[];
         };
         /**
+         * LanguageOption
+         * @description A language captions can be requested in (visiovox_api.languages).
+         */
+        LanguageOption: {
+            /** Code */
+            code: string;
+            /**
+             * Group
+             * @enum {string}
+             */
+            group: "india" | "world";
+            /** Name */
+            name: string;
+            /** Native */
+            native: string | null;
+        };
+        /**
          * LimitsResponse
          * @description Live upload limits (docs/28 §D2).
          *
@@ -578,6 +600,8 @@ export interface components {
         LimitsResponse: {
             /** Available Bytes */
             available_bytes: number;
+            /** Caption Languages */
+            caption_languages: components["schemas"]["LanguageOption"][];
             /** Max Duration Seconds */
             max_duration_seconds: number;
             /** Max Speakers */
@@ -615,6 +639,8 @@ export interface components {
             has_video: boolean;
             /** Id */
             id: string;
+            /** Language */
+            language: string | null;
             /** Overlap Ratio */
             overlap_ratio: number | null;
             /** Speaker Count */

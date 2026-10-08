@@ -60,6 +60,18 @@
       "CreateProjectRequest": {
         "additionalProperties": false,
         "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Spoken language for captions, a code from /v1/limits `caption_languages`; omit or null to detect automatically",
+            "title": "Language"
+          },
           "rights_attested": {
             "description": "User confirms they may process this recording",
             "title": "Rights Attested",
@@ -327,12 +339,51 @@
         "title": "JobStageResponse",
         "type": "object"
       },
+      "LanguageOption": {
+        "description": "A language captions can be requested in (visiovox_api.languages).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "group": {
+            "enum": ["india", "world"],
+            "title": "Group",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "native": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native"
+          }
+        },
+        "required": ["code", "name", "native", "group"],
+        "title": "LanguageOption",
+        "type": "object"
+      },
       "LimitsResponse": {
         "description": "Live upload limits (docs/28 \u00a7D2).\n\nComputed per request rather than configured: these move with free space and\nwith other uploads in flight, and a cap that ignores the disk is a promise\nthe machine cannot keep.",
         "properties": {
           "available_bytes": {
             "title": "Available Bytes",
             "type": "integer"
+          },
+          "caption_languages": {
+            "items": {
+              "$ref": "#/components/schemas/LanguageOption"
+            },
+            "title": "Caption Languages",
+            "type": "array"
           },
           "max_duration_seconds": {
             "title": "Max Duration Seconds",
@@ -367,7 +418,8 @@
           "max_speakers",
           "available_bytes",
           "reserved_bytes",
-          "quotas"
+          "quotas",
+          "caption_languages"
         ],
         "title": "LimitsResponse",
         "type": "object"
@@ -434,6 +486,17 @@
             "title": "Id",
             "type": "string"
           },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
           "overlap_ratio": {
             "anyOf": [
               {
@@ -478,6 +541,7 @@
           "status",
           "duration_ms",
           "has_video",
+          "language",
           "speaker_count",
           "overlap_ratio",
           "difficulty",

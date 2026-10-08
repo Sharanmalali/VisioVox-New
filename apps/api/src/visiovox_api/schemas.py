@@ -10,7 +10,9 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
+
+from .languages import is_supported
 
 Password = Annotated[str, StringConstraints(min_length=12, max_length=128)]
 Title = Annotated[str, StringConstraints(min_length=1, max_length=200, strip_whitespace=True)]
@@ -73,6 +75,18 @@ class CreateProjectRequest(StrictModel):
     title: Title
     # FR-UPL-08: the user attests they have the right to process this media.
     rights_attested: bool = Field(description="User confirms they may process this recording")
+    language: str | None = Field(
+        default=None,
+        description="Spoken language for captions, a code from /v1/limits "
+        "`caption_languages`; omit or null to detect automatically",
+    )
+
+    @field_validator("language")
+    @classmethod
+    def _known_language(cls, value: str | None) -> str | None:
+        if value is not None and not is_supported(value):
+            raise ValueError("not a caption language this service supports")
+        return value
 
 
 class ProjectResponse(BaseModel):
@@ -81,6 +95,7 @@ class ProjectResponse(BaseModel):
     status: str
     duration_ms: int | None
     has_video: bool
+    language: str | None
     speaker_count: int | None
     overlap_ratio: float | None
     difficulty: str | None
@@ -223,6 +238,15 @@ class RenditionOption(BaseModel):
     kind: str
 
 
+class LanguageOption(BaseModel):
+    """A language captions can be requested in (visiovox_api.languages)."""
+
+    code: str
+    name: str
+    native: str | None
+    group: Literal["india", "world"]
+
+
 class LimitsResponse(BaseModel):
     """Live upload limits (docs/28 §D2).
 
@@ -237,6 +261,8 @@ class LimitsResponse(BaseModel):
     available_bytes: int
     reserved_bytes: int
     quotas: dict[str, dict[str, int]]
+    # Not a limit, but the upload screen needs it at the same moment.
+    caption_languages: list[LanguageOption]
 
 
 class UploadCompleteRequest(StrictModel):

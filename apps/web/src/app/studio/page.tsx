@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ConsoleChrome, Module, type Tab } from '@/components/console/ConsoleChrome';
 import { TelemetryLog, type LogLine } from '@/components/console/TelemetryLog';
+import { LanguageSelect } from '@/components/LanguageSelect';
 import { Player } from '@/components/Player';
 import { Alert, Badge, Key, Progress, cx } from '@/components/ui';
 import { signOutEverywhere } from '@/lib/firebase';
@@ -64,6 +65,7 @@ export default function StudioPage() {
 
   const [tab, setTab] = useState<Tab>('ingest');
   const [limits, setLimits] = useState<LimitsResponse | null>(null);
+  const [language, setLanguage] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [inspected, setInspected] = useState<{
     durationSeconds: number | null;
@@ -278,7 +280,7 @@ export default function StudioPage() {
     lastMilestone.current = 0;
     startedAt.current = Date.now();
     try {
-      const project = await api().createProject(file.name);
+      const project = await api().createProject(file.name, language);
       setProjectId(project.id);
       log('Uploading your video…');
       handleRef.current = await startUpload({
@@ -507,6 +509,14 @@ export default function StudioPage() {
                 )}
 
                 {error !== null && <Alert tone="danger">{error}</Alert>}
+
+                {progress === null && (
+                  <LanguageSelect
+                    languages={limits?.caption_languages}
+                    value={language}
+                    onChange={setLanguage}
+                  />
+                )}
 
                 <div className="flex flex-wrap gap-3">
                   {progress === null && (

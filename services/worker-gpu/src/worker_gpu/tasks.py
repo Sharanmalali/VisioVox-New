@@ -250,6 +250,7 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
                 source=source,
                 settings=settings,
                 project_id=project.id,
+                language=project.language,
             )
         except PipelineError as exc:
             # A clean refusal: the recording cannot yield a result, and the

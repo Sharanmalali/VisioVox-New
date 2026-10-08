@@ -24,6 +24,7 @@ export type UploadInitResponse = Schemas['UploadInitResponse'];
 export type UploadPartsResponse = Schemas['UploadPartsResponse'];
 export type UploadStatusResponse = Schemas['UploadStatusResponse'];
 export type LimitsResponse = Schemas['LimitsResponse'];
+export type LanguageOption = Schemas['LanguageOption'];
 export type ExportResponse = Schemas['ExportResponse'];
 export type ExportListResponse = Schemas['ExportListResponse'];
 export type RenditionOption = Schemas['RenditionOption'];
@@ -131,10 +132,11 @@ export class VisioVoxClient {
 
   // ---- projects ----
 
-  createProject(title: string): Promise<ProjectResponse> {
+  /** `language`: a code from `getLimits().caption_languages`; null detects it. */
+  createProject(title: string, language: string | null = null): Promise<ProjectResponse> {
     return this.request<ProjectResponse>('/v1/projects', {
       method: 'POST',
-      body: JSON.stringify({ title, rights_attested: true }),
+      body: JSON.stringify({ title, rights_attested: true, language }),
     });
   }
 

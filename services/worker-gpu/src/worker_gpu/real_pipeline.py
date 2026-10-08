@@ -165,8 +165,13 @@ def run_pipeline(
     source: Path,
     settings: Settings,
     project_id: str,
+    language: str | None = None,
 ) -> PipelineOutput:
-    """Execute the pipeline for one project."""
+    """Execute the pipeline for one project.
+
+    `language` is the spoken language the person chose for captions (a code
+    from visiovox_api.languages); None lets Whisper detect it per track.
+    """
     from pipeline import s0_ingest, s9_package, sandbox
     from pipeline.s9_package import SpeakerTrack
     from pipeline.types import Modality
@@ -279,6 +284,9 @@ def run_pipeline(
                     s7_transcribe.transcribe(
                         track.faithful,
                         transcriber,
+                        # A chosen language is honoured as given: automatic
+                        # detection misreads accented speech (docs/29 §7).
+                        language=language,
                         vad_filter=True,
                         condition_on_previous_text=False,
                     )[0]

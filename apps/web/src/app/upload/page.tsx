@@ -13,6 +13,7 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { LanguageSelect } from '@/components/LanguageSelect';
 import { Alert, Badge, Button, Card, Progress } from '@/components/ui';
 import {
   formatBytes,
@@ -61,6 +62,7 @@ export default function UploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [inspected, setInspected] = useState<Inspected | null>(null);
   const [title, setTitle] = useState('');
+  const [language, setLanguage] = useState<string | null>(null);
   const [attested, setAttested] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState<UploadProgress | null>(null);
@@ -106,7 +108,7 @@ export default function UploadPage() {
     if (!file) return;
     setError(null);
     try {
-      const project = await api().createProject(title || file.name);
+      const project = await api().createProject(title || file.name, language);
       handleRef.current = await startUpload({
         client: api(),
         projectId: project.id,
@@ -276,6 +278,12 @@ export default function UploadPage() {
             Processing time is an estimate from measured runs, and varies with how much people talk
             over each other.
           </p>
+
+          <LanguageSelect
+            languages={limits?.caption_languages}
+            value={language}
+            onChange={setLanguage}
+          />
 
           <label className="flex items-start gap-2 text-sm">
             <input

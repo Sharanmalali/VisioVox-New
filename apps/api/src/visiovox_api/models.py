@@ -133,6 +133,8 @@ class Project(Base):
     width: Mapped[int | None] = mapped_column(Integer)
     height: Mapped[int | None] = mapped_column(Integer)
     has_video: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    # Spoken language for captions (visiovox_api.languages); None = detect.
+    language: Mapped[str | None] = mapped_column(Text)
 
     speaker_count: Mapped[int | None] = mapped_column(Integer)
     overlap_ratio: Mapped[float | None] = mapped_column(Float)
