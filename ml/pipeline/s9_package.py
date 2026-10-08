@@ -62,6 +62,9 @@ class SpeakerTrack:
     mean_confidence: float
     extraction_ok: bool
     transcript: Transcript | None = None
+    # When this person was speaking, from face-anchored diarization
+    # (pipeline.diarize), as (start_ms, end_ms). None when it did not run.
+    activity: list[tuple[int, int]] | None = None
     natural: np.ndarray | None = None
 
 
@@ -223,6 +226,17 @@ def package(
                             }
                             for s in track.transcript.segments
                         ],
+                        # Read by the conversation insights; captions ignore it.
+                        **(
+                            {
+                                "activity": {
+                                    "source": "face_anchored_diarization",
+                                    "intervals": [list(i) for i in track.activity],
+                                }
+                            }
+                            if track.activity is not None
+                            else {}
+                        ),
                     },
                     indent=2,
                 ),

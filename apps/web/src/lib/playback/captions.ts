@@ -31,6 +31,12 @@ export interface Transcript {
   readonly language: string;
   readonly language_probability: number;
   readonly segments: readonly CaptionSegment[];
+  /**
+   * When this person was speaking, from face-anchored diarization
+   * (ml/pipeline/diarize.py), as [start_ms, end_ms]. Absent on projects
+   * processed before it shipped; the insights then fall back to word timings.
+   */
+  readonly activity?: readonly (readonly [number, number])[];
 }
 
 /**
@@ -43,10 +49,14 @@ export interface Transcript {
  */
 export interface CaptionIndex {
   readonly segments: readonly CaptionSegment[];
+  readonly activity?: readonly (readonly [number, number])[];
 }
 
 export function buildCaptionIndex(transcript: Transcript): CaptionIndex {
-  return { segments: [...transcript.segments].sort((a, b) => a.start_ms - b.start_ms) };
+  const segments = [...transcript.segments].sort((a, b) => a.start_ms - b.start_ms);
+  return transcript.activity === undefined
+    ? { segments }
+    : { segments, activity: transcript.activity };
 }
 
 export const EMPTY_CAPTION_INDEX: CaptionIndex = { segments: [] };
@@ -128,9 +138,26 @@ export function parseTranscript(body: unknown): Transcript | null {
 
   const language = record['language'];
   const languageProbability = record['language_probability'];
-  return {
+  const activity = parseActivity(record['activity']);
+  const parsed: Transcript = {
     language: typeof language === 'string' ? language : 'unknown',
     language_probability: typeof languageProbability === 'number' ? languageProbability : 0,
     segments,
   };
+  return activity === null ? parsed : { ...parsed, activity };
+}
+
+/** `{ intervals: [[start_ms, end_ms], ...] }`, or null if absent or malformed. */
+function parseActivity(raw: unknown): [number, number][] | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const intervals = (raw as Record<string, unknown>)['intervals'];
+  if (!Array.isArray(intervals)) return null;
+  const out: [number, number][] = [];
+  for (const entry of intervals as unknown[]) {
+    if (!Array.isArray(entry) || entry.length !== 2) return null;
+    const [a, b] = entry as unknown[];
+    if (typeof a !== 'number' || typeof b !== 'number') return null;
+    out.push([a, b]);
+  }
+  return out;
 }

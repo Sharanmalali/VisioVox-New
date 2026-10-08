@@ -256,3 +256,19 @@ def test_caption_json_is_the_shape_the_player_parses(tmp_path: Path) -> None:
     seg = body["segments"][0]
     assert (seg["text"], seg["start_ms"], seg["end_ms"]) == ("hello there", 100, 900)
     assert seg["words"][0] == {"text": "hello", "start_ms": 100, "end_ms": 500, "probability": 0.94}
+
+
+@needs_ffmpeg
+def test_speech_activity_rides_in_the_caption_json(tmp_path: Path) -> None:
+    """Face-anchored diarization (pipeline.diarize) reaches the insights panel
+    through the caption file, which - unlike the frozen manifest - can grow."""
+    tracks = _tracks(2)
+    tracks[0].activity = [(100, 900), (1200, 2000)]
+    package(PROJECT_ID, tracks, tmp_path, has_video=False, signed_until=SIGNED_UNTIL)
+    first = json.loads((tmp_path / "spk_1.json").read_text())
+    second = json.loads((tmp_path / "spk_2.json").read_text())
+    assert first["activity"] == {
+        "source": "face_anchored_diarization",
+        "intervals": [[100, 900], [1200, 2000]],
+    }
+    assert "activity" not in second

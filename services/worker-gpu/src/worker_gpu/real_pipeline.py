@@ -103,6 +103,36 @@ def _read_audio(path: Path) -> np.ndarray:
     return audio if audio.ndim == 1 else audio.mean(axis=1)
 
 
+_DIARIZER: Any = None
+
+
+def _speech_activity(
+    audio: np.ndarray, tracks: list[Any], settings: Settings
+) -> list[list[tuple[int, int]]]:
+    """When each person spoke: pyannote's timing, named by the faces.
+
+    Caption words alone undercount overlap (docs/29 §9), and the insights
+    panel reads this instead when it is present. Loaded once per worker.
+    """
+    from pipeline import diarize
+
+    global _DIARIZER
+    if _DIARIZER is None:
+        _DIARIZER = diarize.load_diarizer(
+            settings.hf_token.get_secret_value(), settings.torch_device
+        )
+    segments = diarize.diarize(audio, _DIARIZER)
+    speech = [
+        [
+            (w.start_ms, w.end_ms)
+            for s in (t.transcript.segments if t.transcript is not None else [])
+            for w in s.words
+        ]
+        for t in tracks
+    ]
+    return diarize.anchor(segments, speech, round(len(audio) / av_tse.SAMPLE_RATE * 1000))
+
+
 def _load_embedder(settings: Settings) -> Any:
     """ECAPA, for deciding whether two face tracks are the same person.
 
@@ -306,6 +336,15 @@ def run_pipeline(
             except Exception as exc:
                 logger.warning("transcription unavailable: %s", exc)
                 report.warn("captions_unavailable")
+            else:
+                # Optional: without it the insights fall back to caption words.
+                try:
+                    for track, activity in zip(
+                        tracks, _speech_activity(audio, tracks, settings), strict=True
+                    ):
+                        track.activity = activity
+                except Exception as exc:
+                    logger.warning("diarization unavailable: %s", exc)
 
         # ---- S9: package -----------------------------------------------------------
         with runner.stage(BY_NAME["S9_package"]) as report:

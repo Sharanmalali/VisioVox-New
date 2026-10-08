@@ -141,3 +141,50 @@ no better than chance. Moving low-retention words (< −5 dB, fitted) to an
 "off-screen" caption stream lowers held-out saWER 78.2 → 73.7 % only by
 discarding uncertain words, and raises cpWER 68.7 → 78.0 %. Not deployed;
 off-screen attribution needs a visual active-speaker decision.
+
+## 9. Follow-up: conversation insights (2026-10-09, face-anchored diarization deployed)
+
+The project page reports, per person, talk time and share, turns, pace and
+who interrupted whom, plus a timeline of when people talked over each other
+(`ml/pipeline/insights.py`, mirrored line for line in
+`apps/web/src/lib/playback/insights.ts`; both pinned to the hand-computed
+`packages/contracts/examples/insights.json`). Definitions: words ≤ 500 ms
+apart form a spurt; an overlap onset is B starting ≥ 200 ms into A's spurt —
+a *backchannel* if B's spurt is < 1 s and ends inside A's, an *interruption*
+if A stops within 2 s and B outlasts A, otherwise *talk-over*.
+
+`scripts/bench_ami_insights.py` scores these against the same insights from
+AMI's hand-aligned words, all 30 meetings (`insights.json`,
+`insights_summary.json`). Interruption: same interrupter and interrupted
+within ±1 s. Overlap: frames inside the displayed overlap regions.
+
+| System | Talk-share MAE | Overlap P / R / F1 | Interruption P / R / F1 (241 ref.) |
+|---|---|---|---|
+| Caption words of the separated tracks | 13.1 pp [10.2, 16.4] | 0.28 / 0.59 / 0.38 | 0.05 / 0.11 / 0.07 |
+| **Face-anchored diarization** (deployed) | **12.9 pp** [9.0, 17.2] | **0.78 / 0.76 / 0.77** | **0.34 / 0.15 / 0.21** |
+| pyannote 3.1, labels named by the reference (oracle, not achievable) | 6.4 pp [4.6, 8.5] | 0.78 / 0.76 / 0.77 | 0.52 / 0.24 / 0.33 |
+
+Caption words undercount overlap by construction: the cross-track dedup that
+makes captions readable (ADR-0017) removes words exactly where two people
+speak at once. **Face-anchored diarization** (`ml/pipeline/diarize.py`,
+ADR-0019) takes *when* from pyannote 3.1 on the mixture and *who* from the
+faces: pyannote's anonymous labels are paired one-to-one with face tracks by
+how much each overlaps that face's caption words (Hungarian assignment). No
+reference is used. It doubles overlap F1 and triples interruption F1 at the
+same talk-share error (difference −0.2 pp [−2.7, +2.5]).
+
+The design was chosen on the 20 fitting meetings only
+(`scripts/select_insights_design.py`, `insights_design.json`): one-to-one
+pairing beat "each label to its best face" (talk share 11.3 vs 15.4 pp) and
+Jaccard-normalised pairing on every metric. On the 10 held-out meetings the
+gains in overlap (F1 0.80 vs 0.42) and interruptions (0.11 vs 0.08) held,
+but talk share was **worse** than caption words (16.1 vs 13.1 pp, n = 10):
+when a label is paired with the wrong face, all of that label's talk time
+moves with it. The remaining gap to the oracle (+6.5 pp [+3.2, +10.6]) is
+that naming error, and it traces to visibility (§2): TS3003a's most
+talkative participant is tracked for 11 % of the window, so their words — and
+the label they anchor — land on other faces.
+
+Interruption detection is weak for every system, the oracle included (F1
+0.33): AMI's interruptions are short and the 2 s yield rule is coarse. The
+panel therefore presents interruptions as *moments to review* and says so.

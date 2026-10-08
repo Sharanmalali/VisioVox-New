@@ -38,6 +38,11 @@ export interface PlayerAsideContext {
   readonly lines: readonly TranscriptLine[];
   /** False until every speaker's captions have been fetched (or failed). */
   readonly captionsReady: boolean;
+  /**
+   * Face-anchored diarization per speaker ordinal, when every speaker has it;
+   * null for projects processed before it shipped.
+   */
+  readonly activity: ReadonlyMap<number, readonly (readonly [number, number])[]> | null;
   readonly mediaMs: number;
   readonly activeId: TrackId;
   readonly ready: boolean;
@@ -46,6 +51,10 @@ export interface PlayerAsideContext {
   readonly seekToMs: (ms: number) => void;
   /** Switch to this line's speaker, jump to it, and play. */
   readonly playLine: (line: TranscriptLine) => void;
+  /** Switch the audio to a speaker, or to the original mix. */
+  readonly selectTrack: (id: TrackId) => void;
+  /** Jump to a time and play from there. */
+  readonly playFrom: (ms: number) => void;
 }
 
 interface PlayerProps {
@@ -65,9 +74,17 @@ interface PlayerProps {
   readonly names?: Readonly<Record<string, string>>;
   /** A panel beside the player, given the player's state (the transcript). */
   readonly aside?: (context: PlayerAsideContext) => ReactNode;
+  /** A full-width panel under the player and its aside (insights). */
+  readonly below?: (context: PlayerAsideContext) => ReactNode;
 }
 
-export function Player({ manifest, forceEngine, names, aside }: PlayerProps): React.JSX.Element {
+export function Player({
+  manifest,
+  forceEngine,
+  names,
+  aside,
+  below,
+}: PlayerProps): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
 
@@ -209,6 +226,16 @@ export function Player({ manifest, forceEngine, names, aside }: PlayerProps): Re
 
   const lines = useMemo(() => mergeTranscript(manifest.speakers, captions), [manifest, captions]);
 
+  const activity = useMemo(() => {
+    const out = new Map<number, readonly (readonly [number, number])[]>();
+    for (const speaker of manifest.speakers) {
+      const intervals = captions[speaker.id]?.activity;
+      if (intervals === undefined) return null;
+      out.set(speaker.ordinal, intervals);
+    }
+    return out;
+  }, [manifest, captions]);
+
   const playLine = useCallback(
     (line: TranscriptLine): void => {
       const speaker = manifest.speakers.find((s) => s.id === line.speakerId);
@@ -217,6 +244,14 @@ export function Player({ manifest, forceEngine, names, aside }: PlayerProps): Re
       void videoRef.current?.play().catch(() => undefined);
     },
     [manifest, select, seekToMs],
+  );
+
+  const playFrom = useCallback(
+    (ms: number): void => {
+      seekToMs(ms);
+      void videoRef.current?.play().catch(() => undefined);
+    },
+    [seekToMs],
   );
 
   const player = (
@@ -314,23 +349,32 @@ export function Player({ manifest, forceEngine, names, aside }: PlayerProps): Re
     </div>
   );
 
-  if (aside === undefined) return player;
+  if (aside === undefined && below === undefined) return player;
+  const context: PlayerAsideContext = {
+    lines,
+    captionsReady,
+    activity,
+    mediaMs,
+    activeId,
+    ready,
+    speakers: manifest.speakers,
+    nameOf,
+    seekToMs,
+    playLine,
+    selectTrack: select,
+    playFrom,
+  };
   return (
-    <div className="player-grid">
-      {player}
-      <div className="player-aside">
-        {aside({
-          lines,
-          captionsReady,
-          mediaMs,
-          activeId,
-          ready,
-          speakers: manifest.speakers,
-          nameOf,
-          seekToMs,
-          playLine,
-        })}
-      </div>
+    <div className="flex flex-col gap-6">
+      {aside === undefined ? (
+        player
+      ) : (
+        <div className="player-grid">
+          {player}
+          <div className="player-aside">{aside(context)}</div>
+        </div>
+      )}
+      {below?.(context)}
     </div>
   );
 }

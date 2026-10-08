@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { JobResponse, ProjectResponse } from '@visiovox/ts-client';
 
 import { ExportPanel } from '@/components/ExportPanel';
+import { InsightsPanel, insightBlocks, insightsFor } from '@/components/InsightsPanel';
 import { IconChevronDown, IconChevronRight, IconInfo } from '@/components/icons';
 import { Player } from '@/components/Player';
 import { ProcessingView } from '@/components/ProcessingView';
@@ -266,7 +267,21 @@ export default function ProjectPage() {
                       context={context}
                       title={project.title}
                       onRename={renameSpeaker}
+                      docxPreamble={() =>
+                        insightBlocks(
+                          insightsFor(
+                            context.lines,
+                            context.speakers.map((s) => s.ordinal),
+                            manifest.duration_ms,
+                            context.activity,
+                          ),
+                          context.nameOf,
+                        )
+                      }
                     />
+                  )}
+                  below={(context) => (
+                    <InsightsPanel context={context} durationMs={manifest.duration_ms} />
                   )}
                 />
               </Slab>

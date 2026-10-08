@@ -145,3 +145,33 @@ describe('parseTranscript', () => {
     expect(parseTranscript({ detail: 'Forbidden' })).toBeNull();
   });
 });
+
+describe('parseTranscript activity', () => {
+  const base = { language: 'en', segments: [] };
+
+  it('reads face-anchored speech activity when present', () => {
+    const t = parseTranscript({
+      ...base,
+      activity: {
+        source: 'face_anchored_diarization',
+        intervals: [
+          [0, 900],
+          [1200, 2000],
+        ],
+      },
+    });
+    expect(t?.activity).toEqual([
+      [0, 900],
+      [1200, 2000],
+    ]);
+    expect(buildCaptionIndex(t ?? { ...base, language_probability: 0 }).activity).toHaveLength(2);
+  });
+
+  it('leaves it out when absent or malformed, so insights fall back to words', () => {
+    expect(parseTranscript(base)?.activity).toBeUndefined();
+    expect(
+      parseTranscript({ ...base, activity: { intervals: [[0, 'x']] } })?.activity,
+    ).toBeUndefined();
+    expect(parseTranscript({ ...base, activity: [[0, 1]] })?.activity).toBeUndefined();
+  });
+});
