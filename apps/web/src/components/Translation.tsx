@@ -38,7 +38,9 @@ export function useTranslations(projectId: string, manifest: Manifest | null): T
   const [languages, setLanguages] = useState<TranslationLanguageOption[]>([]);
   const [items, setItems] = useState<TranslationResponse[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  const [texts, setTexts] = useState<Map<string, string> | null>(null);
+  // Tagged with its language, so switching languages can never show the
+  // previous language's text under the new one's name while it loads.
+  const [shown, setShown] = useState<{ language: string; map: Map<string, string> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const loaded = useRef(new Map<string, Map<string, string>>());
 
@@ -71,13 +73,10 @@ export function useTranslations(projectId: string, manifest: Manifest | null): T
   // Once ready, fetch each speaker's translated captions and key them like
   // the transcript's lines.
   useEffect(() => {
-    if (active === null || manifest === null) {
-      setTexts(null);
-      return;
-    }
+    if (active === null || manifest === null) return;
     const cached = loaded.current.get(active);
     if (cached !== undefined) {
-      setTexts(cached);
+      setShown({ language: active, map: cached });
       return;
     }
     if (current?.status === 'failed') {
@@ -105,7 +104,7 @@ export function useTranslations(projectId: string, manifest: Manifest | null): T
       }
       if (stopped()) return;
       loaded.current.set(language, map);
-      setTexts(map);
+      setShown({ language, map });
     })().catch(() => {
       if (!cancelled) setError('The translation could not be loaded.');
     });
@@ -133,6 +132,7 @@ export function useTranslations(projectId: string, manifest: Manifest | null): T
     [items, projectId, refresh],
   );
 
+  const texts = active !== null && shown?.language === active ? shown.map : null;
   return { languages, items, active, texts, working, error, choose };
 }
 
