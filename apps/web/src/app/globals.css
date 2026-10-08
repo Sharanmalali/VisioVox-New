@@ -1004,6 +1004,9 @@ th {
 .insights-table td,
 .insights-table th {
   padding: 0.55rem 0.75rem;
+  /* The table scrolls sideways on narrow screens rather than wrapping
+     "9.2 s (25%)" or "244 wpm" onto two lines. */
+  white-space: nowrap;
 }
 
 /* ---------------------------------------------------------- translations
