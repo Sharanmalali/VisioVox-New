@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     # local directory so a job never depends on the network.
     speaker_embedder_source: str = "speechbrain/spkrec-ecapa-voxceleb"
     speaker_embedder_dir: str = "~/models/ecapa"
+    # NLLB-200, converted for CTranslate2 (ADR-0020).
+    translation_model_dir: str = "~/models/nllb-200-distilled-1.3B-ct2"
     # pyannote diarization is gated; without a token S2a degrades to VAD only
     # and the pipeline falls back to single-speaker handling.
     hf_token: SecretStr = SecretStr("")

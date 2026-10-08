@@ -24,7 +24,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from visiovox_api.config import Settings, get_settings
-from visiovox_api.models import Export, Job, Project, UsageCounter, new_id
+from visiovox_api.models import Export, Job, Project, Translation, UsageCounter, new_id
 from visiovox_api.storage import StorageError
 
 from .real_pipeline import INFORMATIONAL_WARNINGS, PipelineError, run_pipeline
@@ -470,3 +470,100 @@ def enqueue_export(export_id: str) -> None:
     prevent.
     """
     render_export.apply_async(args=[export_id], queue="gpu")
+
+
+# --------------------------------------------------------------------------
+# translated captions (ADR-0020)
+# --------------------------------------------------------------------------
+
+_TRANSLATOR: Any = None
+
+
+def _translator() -> Any:
+    """NLLB, loaded once per worker process and kept: it is reused by every
+    translation, and loading it costs more than translating a meeting."""
+    global _TRANSLATOR
+    if _TRANSLATOR is None:
+        from pipeline import s8_translate
+
+        _TRANSLATOR = s8_translate.load_translator(
+            settings.translation_model_dir, settings.torch_device
+        )
+    return _TRANSLATOR
+
+
+@celery_app.task(name="visiovox.translate_captions", bind=True, max_retries=0)
+def translate_captions(self: Any, translation_id: str) -> dict[str, Any]:
+    """Translate every speaker's captions of one project into one language."""
+    import json
+
+    from pipeline import s8_translate
+    from visiovox_api.translation_languages import BY_CODE, SOURCE_FLORES
+
+    with _Session() as session:
+        row = session.get(Translation, translation_id)
+        if row is None:
+            return {"status": "missing", "translation_id": translation_id}
+        project = session.get(Project, row.project_id)
+        if project is None or project.manifest is None:
+            row.status = "failed"
+            row.error_detail = "the recording is no longer available"
+            row.finished_at = _now()
+            session.commit()
+            return {"status": "failed", "translation_id": translation_id}
+
+        row.status = "running"
+        session.commit()
+
+        def fail(reason: str) -> dict[str, Any]:
+            row.status = "failed"
+            row.error_detail = reason[:500]
+            row.finished_at = _now()
+            session.commit()
+            return {"status": "failed", "translation_id": translation_id, "reason": reason}
+
+        target = BY_CODE.get(row.language)
+        if target is None:
+            return fail("this language is not offered")
+
+        base = Path(settings.media_root) / "projects" / project.id
+        out_dir = base / "translations" / row.language
+        out_dir.mkdir(parents=True, exist_ok=True)
+        speakers = [s for s in project.manifest.get("speakers", []) if isinstance(s, dict)]
+        client = _s3_client(settings)
+        written = 0
+        for speaker in speakers:
+            ordinal = speaker.get("ordinal")
+            source_file = base / f"spk_{ordinal}.json"
+            if not source_file.is_file():
+                # A speaker without captions has nothing to translate.
+                continue
+            body = json.loads(source_file.read_text(encoding="utf-8"))
+            source = SOURCE_FLORES.get(str(body.get("language")))
+            if source is None:
+                return fail(
+                    f"captions in '{body.get('language')}' cannot be translated by this model"
+                )
+            try:
+                translated = s8_translate.translate_transcript(
+                    body, source, target.nllb, target.code, _translator()
+                )
+            except Exception as exc:
+                logger.exception("translation %s failed", translation_id)
+                return fail(f"translation failed: {exc}")
+            path = out_dir / f"spk_{ordinal}.json"
+            path.write_text(json.dumps(translated, ensure_ascii=False), encoding="utf-8")
+            client.upload_file(
+                str(path),
+                settings.s3_bucket,
+                f"projects/{project.id}/translations/{row.language}/spk_{ordinal}.json",
+                ExtraArgs={"ContentType": "application/json; charset=utf-8"},
+            )
+            written += 1
+
+        if written == 0:
+            return fail("this recording has no captions to translate")
+        row.status = "ready"
+        row.finished_at = _now()
+        session.commit()
+        return {"status": "ready", "translation_id": translation_id, "speakers": written}

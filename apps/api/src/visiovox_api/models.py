@@ -453,3 +453,35 @@ class ShareLink(Base):
         if self.revoked_at is not None:
             return False
         return not (self.expires_at is not None and self.expires_at < dt.datetime.now(dt.UTC))
+
+
+class Translation(Base):
+    """A project's captions translated into one language (ADR-0020).
+
+    Unique on (project, language): asking again returns the same translation,
+    and a failed one is retried in place. The files live at
+    `projects/<id>/translations/<language>/spk_<ordinal>.json`.
+    """
+
+    __tablename__ = "translations"
+
+    id: Mapped[str] = _pk("trl")
+    project_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _now_col()
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("uq_translation_project_language", "project_id", "language", unique=True),
+        CheckConstraint(
+            _in_list("status", ("queued", "running", "ready", "failed")),
+            name="translations_status_check",
+        ),
+    )

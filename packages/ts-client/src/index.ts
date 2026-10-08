@@ -33,6 +33,9 @@ export type ShareListResponse = Schemas['ShareListResponse'];
 export type CreateShareRequest = Schemas['CreateShareRequest'];
 export type CreateExportRequest = Schemas['CreateExportRequest'];
 export type CompletedPart = Schemas['CompletedPart'];
+export type TranslationResponse = Schemas['TranslationResponse'];
+export type TranslationListResponse = Schemas['TranslationListResponse'];
+export type TranslationLanguageOption = Schemas['TranslationLanguageOption'];
 
 export const CLIENT_VERSION = '0.1.0' as const;
 
@@ -161,6 +164,21 @@ export class VisioVoxClient {
     return this.request<ProjectResponse>(`/v1/projects/${id}/speakers/${String(ordinal)}/name`, {
       method: 'PUT',
       body: JSON.stringify({ name }),
+    });
+  }
+
+  // ---- translated captions ----
+
+  /** Every translation of a project, and the languages on offer. */
+  listTranslations(id: string): Promise<TranslationListResponse> {
+    return this.request<TranslationListResponse>(`/v1/projects/${id}/translations`);
+  }
+
+  /** Ask for a translation; asking again for the same language is harmless. */
+  requestTranslation(id: string, language: string): Promise<TranslationResponse> {
+    return this.request<TranslationResponse>(`/v1/projects/${id}/translations`, {
+      method: 'POST',
+      body: JSON.stringify({ language }),
     });
   }
 

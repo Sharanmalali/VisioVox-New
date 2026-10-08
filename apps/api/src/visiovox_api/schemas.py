@@ -306,3 +306,41 @@ class ErrorResponse(BaseModel):
 
     code: str
     detail: str
+
+
+class TranslationLanguageOption(BaseModel):
+    code: str
+    name: str
+    native: str
+    group: str
+
+
+class CreateTranslationRequest(StrictModel):
+    language: str
+
+    @field_validator("language")
+    @classmethod
+    def _known_target(cls, value: str) -> str:
+        from .translation_languages import is_target
+
+        if not is_target(value):
+            raise ValueError("not a language captions can be translated into")
+        return value
+
+
+class TranslatedSpeaker(BaseModel):
+    ordinal: int
+    url: str
+
+
+class TranslationResponse(BaseModel):
+    language: str
+    status: str
+    error: str | None
+    # Signed caption files, one per speaker, once the status is "ready".
+    speakers: list[TranslatedSpeaker] = Field(default_factory=list)
+
+
+class TranslationListResponse(BaseModel):
+    items: list[TranslationResponse]
+    languages: list[TranslationLanguageOption]

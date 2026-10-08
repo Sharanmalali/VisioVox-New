@@ -12,6 +12,7 @@ import { Player } from '@/components/Player';
 import { ProcessingView } from '@/components/ProcessingView';
 import { SharePanel } from '@/components/SharePanel';
 import { TranscriptPanel } from '@/components/TranscriptPanel';
+import { TranslateMenu, useTranslations } from '@/components/Translation';
 import { AppPage, AppShell } from '@/components/shell/AppShell';
 import { Alert, Badge, Skeleton, Slab } from '@/components/ui';
 import { clockDuration, languageName, statusMeta } from '@/lib/format';
@@ -67,6 +68,27 @@ export default function ProjectPage() {
   // or refreshed, the first render has no user yet, and a request then goes
   // out without a token.
   const authed = useRequireSignIn();
+  const translation = useTranslations(projectId, manifest);
+  const translatingTo = translation.languages.find((l) => l.code === translation.active);
+  const translationNotice =
+    translation.error !== null ? (
+      <>Translation stopped: {translation.error}</>
+    ) : translatingTo === undefined ? null : translation.texts === null ? (
+      <>Translating into {translatingTo.native}. This takes a few seconds.</>
+    ) : (
+      <span className="flex items-center justify-between gap-3">
+        <span>Showing {translatingTo.native}, machine-translated. Exports use it too.</span>
+        <button
+          type="button"
+          className="shrink-0 font-medium underline underline-offset-2"
+          onClick={() => {
+            translation.choose(null);
+          }}
+        >
+          Show original
+        </button>
+      </span>
+    );
 
   useEffect(() => {
     if (!authed) return;
@@ -262,11 +284,15 @@ export default function ProjectPage() {
                 <Player
                   manifest={manifest}
                   names={project.speaker_names ?? {}}
+                  translated={translation.texts}
                   aside={(context) => (
                     <TranscriptPanel
                       context={context}
                       title={project.title}
                       onRename={renameSpeaker}
+                      translated={translation.texts}
+                      headerExtra={<TranslateMenu state={translation} />}
+                      notice={translationNotice}
                       docxPreamble={() =>
                         insightBlocks(
                           insightsFor(

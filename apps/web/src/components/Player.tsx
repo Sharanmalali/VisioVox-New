@@ -76,6 +76,11 @@ interface PlayerProps {
   readonly aside?: (context: PlayerAsideContext) => ReactNode;
   /** A full-width panel under the player and its aside (insights). */
   readonly below?: (context: PlayerAsideContext) => ReactNode;
+  /**
+   * Translated captions, keyed like transcript lines (`speakerId:start_ms`).
+   * The caption box then shows the translation with the original under it.
+   */
+  readonly translated?: ReadonlyMap<string, string> | null;
 }
 
 export function Player({
@@ -84,6 +89,7 @@ export function Player({
   names,
   aside,
   below,
+  translated,
 }: PlayerProps): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
@@ -294,7 +300,14 @@ export function Player({
         nameOf={nameOf}
       />
 
-      <CaptionView segment={segment} mediaMs={mediaMs} onSeek={seekToMs} />
+      <CaptionView
+        segment={segment}
+        mediaMs={mediaMs}
+        onSeek={seekToMs}
+        translation={
+          segment === null ? undefined : translated?.get(`${activeId}:${String(segment.start_ms)}`)
+        }
+      />
 
       <div className="player-controls row">
         {naturalAvailable && (
@@ -457,13 +470,29 @@ interface CaptionViewProps {
   readonly segment: CaptionSegment | null;
   readonly mediaMs: number;
   readonly onSeek: (ms: number) => void;
+  readonly translation?: string | undefined;
 }
 
-function CaptionView({ segment, mediaMs, onSeek }: CaptionViewProps): React.JSX.Element {
+function CaptionView({
+  segment,
+  mediaMs,
+  onSeek,
+  translation,
+}: CaptionViewProps): React.JSX.Element {
   if (segment === null) {
     return (
       <p className="captions captions-idle muted" aria-live="off">
         —
+      </p>
+    );
+  }
+
+  if (translation !== undefined) {
+    // Word timings do not survive translation, so the whole line shows.
+    return (
+      <p className="captions" aria-live="polite">
+        {translation}
+        <span className="captions-original">{segment.text}</span>
       </p>
     );
   }

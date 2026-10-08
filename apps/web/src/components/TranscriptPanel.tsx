@@ -59,6 +59,15 @@ export interface TranscriptPanelProps {
   readonly onRename?: ((ordinal: number, name: string | null) => Promise<void>) | undefined;
   /** Extra blocks for the Word export, placed before the transcript. */
   readonly docxPreamble?: () => readonly DocBlock[];
+  /**
+   * Line key -> translated text. When present the transcript reads in that
+   * language - search and exports included - with the original under each line.
+   */
+  readonly translated?: ReadonlyMap<string, string> | null;
+  /** Controls beside Export (the language picker). */
+  readonly headerExtra?: React.ReactNode;
+  /** A note above the lines (e.g. "Translating into Hindi"). */
+  readonly notice?: React.ReactNode;
 }
 
 function download(name: string, body: BlobPart, type: string): void {
@@ -74,8 +83,29 @@ function download(name: string, body: BlobPart, type: string): void {
   }, 1000);
 }
 
-export function TranscriptPanel({ context, title, onRename, docxPreamble }: TranscriptPanelProps) {
-  const { lines, captionsReady, mediaMs, speakers, nameOf, playLine } = context;
+export function TranscriptPanel({
+  context,
+  title,
+  onRename,
+  docxPreamble,
+  translated,
+  headerExtra,
+  notice,
+}: TranscriptPanelProps) {
+  const { lines: originalLines, captionsReady, mediaMs, speakers, nameOf, playLine } = context;
+  // Translated lines keep their timing and drop word timings (word order
+  // changes); everything below - search, follow, exports - reads these.
+  const lines = useMemo(
+    () =>
+      translated === undefined || translated === null
+        ? originalLines
+        : originalLines.map((l) => {
+            const text = translated.get(l.key);
+            return text === undefined ? l : { ...l, text, words: [] };
+          }),
+    [originalLines, translated],
+  );
+  const isTranslated = translated !== undefined && translated !== null;
 
   const [query, setQuery] = useState('');
   const [hitCursor, setHitCursor] = useState(0);
@@ -226,11 +256,12 @@ export function TranscriptPanel({ context, title, onRename, docxPreamble }: Tran
           activeWord={i === firstActive ? activeWord : -1}
           query={query}
           current={i === currentHit}
+          original={isTranslated ? originalLines[i]?.text : undefined}
           onPlay={playLine}
         />
       )),
     // `signature` stands in for the per-frame values it encodes.
-    [visible, nameOf, signature, query, currentHit, playLine],
+    [visible, nameOf, signature, query, currentHit, playLine, isTranslated, originalLines],
   );
 
   const toggleSpeaker = (ordinal: number) => {
@@ -249,13 +280,16 @@ export function TranscriptPanel({ context, title, onRename, docxPreamble }: Tran
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-baseline gap-2">
             <h2 className="text-[15px] font-semibold">Transcript</h2>
-            {captionsReady && lines.length > 0 && (
+            {captionsReady && lines.length > 0 && headerExtra === undefined && (
               <span className="text-[12px] text-fg-muted tabular">
                 {String(lines.length)} lines
               </span>
             )}
           </div>
-          <ExportMenu disabled={lines.length === 0} onExport={exportAs} />
+          <div className="flex items-center gap-1.5">
+            {headerExtra}
+            <ExportMenu disabled={lines.length === 0} onExport={exportAs} />
+          </div>
         </div>
 
         <div className="relative">
@@ -322,6 +356,12 @@ export function TranscriptPanel({ context, title, onRename, docxPreamble }: Tran
         )}
       </header>
 
+      {notice !== undefined && notice !== null && (
+        <div className="border-b border-border-subtle bg-accent-soft px-4 py-2 text-[12.5px] text-accent">
+          {notice}
+        </div>
+      )}
+
       <div className="relative min-h-0 flex-1">
         <div
           ref={scrollerRef}
@@ -380,6 +420,8 @@ interface LineProps {
   readonly activeWord: number;
   readonly query: string;
   readonly current: boolean;
+  /** The words as spoken, when the line is shown translated. */
+  readonly original?: string | undefined;
   readonly onPlay: (line: TranscriptLine) => void;
 }
 
@@ -391,6 +433,7 @@ const Line = memo(function Line({
   activeWord,
   query,
   current,
+  original,
   onPlay,
 }: LineProps) {
   const slot = ((line.ordinal - 1) % 4) + 1;
@@ -435,6 +478,9 @@ const Line = memo(function Line({
           <span className="tline-time">{readableTime(line.start_ms)}</span>
         </span>
         <span className="tline-text">{body}</span>
+        {original !== undefined && original !== line.text && (
+          <span className="tline-original">{original}</span>
+        )}
       </button>
     </li>
   );

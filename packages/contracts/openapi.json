@@ -136,6 +136,18 @@
         "title": "CreateShareRequest",
         "type": "object"
       },
+      "CreateTranslationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "title": "Language",
+            "type": "string"
+          }
+        },
+        "required": ["language"],
+        "title": "CreateTranslationRequest",
+        "type": "object"
+      },
       "ErrorResponse": {
         "description": "RFC 7807-ish. `code` is stable and machine-readable; `detail` is prose.",
         "properties": {
@@ -743,6 +755,98 @@
           "created_at"
         ],
         "title": "ShareResponse",
+        "type": "object"
+      },
+      "TranslatedSpeaker": {
+        "properties": {
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": ["ordinal", "url"],
+        "title": "TranslatedSpeaker",
+        "type": "object"
+      },
+      "TranslationLanguageOption": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "group": {
+            "title": "Group",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "native": {
+            "title": "Native",
+            "type": "string"
+          }
+        },
+        "required": ["code", "name", "native", "group"],
+        "title": "TranslationLanguageOption",
+        "type": "object"
+      },
+      "TranslationListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationLanguageOption"
+            },
+            "title": "Languages",
+            "type": "array"
+          }
+        },
+        "required": ["items", "languages"],
+        "title": "TranslationListResponse",
+        "type": "object"
+      },
+      "TranslationResponse": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "speakers": {
+            "items": {
+              "$ref": "#/components/schemas/TranslatedSpeaker"
+            },
+            "title": "Speakers",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["language", "status", "error"],
+        "title": "TranslationResponse",
         "type": "object"
       },
       "UploadCompleteRequest": {
@@ -2271,6 +2375,136 @@
         },
         "summary": "Rename Speaker",
         "tags": ["projects"]
+      }
+    },
+    "/v1/projects/{project_id}/translations": {
+      "get": {
+        "operationId": "list_translations_v1_projects__project_id__translations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "List Translations",
+        "tags": ["translations"]
+      },
+      "post": {
+        "operationId": "request_translation_v1_projects__project_id__translations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTranslationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Request Translation",
+        "tags": ["translations"]
       }
     },
     "/v1/projects/{project_id}/upload/complete": {

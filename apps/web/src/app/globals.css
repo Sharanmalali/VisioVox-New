@@ -1005,3 +1005,20 @@ th {
 .insights-table th {
   padding: 0.55rem 0.75rem;
 }
+
+/* ---------------------------------------------------------- translations
+   The translation leads; the words as spoken stay underneath, smaller, so
+   a reader can check a name or a number against the original. */
+
+.tline-original,
+.captions-original {
+  display: block;
+  color: var(--fg-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.captions-original {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}

@@ -321,6 +321,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/translations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Translations */
+        get: operations["list_translations_v1_projects__project_id__translations_get"];
+        put?: never;
+        /** Request Translation */
+        post: operations["request_translation_v1_projects__project_id__translations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/upload/complete": {
         parameters: {
             query?: never;
@@ -522,6 +540,11 @@ export interface components {
             password?: string | null;
             /** Speaker Ordinal */
             speaker_ordinal?: number | null;
+        };
+        /** CreateTranslationRequest */
+        CreateTranslationRequest: {
+            /** Language */
+            language: string;
         };
         /**
          * ErrorResponse
@@ -739,6 +762,42 @@ export interface components {
             speaker_ordinal: number | null;
             /** Token */
             token?: string | null;
+        };
+        /** TranslatedSpeaker */
+        TranslatedSpeaker: {
+            /** Ordinal */
+            ordinal: number;
+            /** Url */
+            url: string;
+        };
+        /** TranslationLanguageOption */
+        TranslationLanguageOption: {
+            /** Code */
+            code: string;
+            /** Group */
+            group: string;
+            /** Name */
+            name: string;
+            /** Native */
+            native: string;
+        };
+        /** TranslationListResponse */
+        TranslationListResponse: {
+            /** Items */
+            items: components["schemas"]["TranslationResponse"][];
+            /** Languages */
+            languages: components["schemas"]["TranslationLanguageOption"][];
+        };
+        /** TranslationResponse */
+        TranslationResponse: {
+            /** Error */
+            error: string | null;
+            /** Language */
+            language: string;
+            /** Speakers */
+            speakers?: components["schemas"]["TranslatedSpeaker"][];
+            /** Status */
+            status: string;
         };
         /** UploadCompleteRequest */
         UploadCompleteRequest: {
@@ -1829,6 +1888,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_translations_v1_projects__project_id__translations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslationListResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    request_translation_v1_projects__project_id__translations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateTranslationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranslationResponse"];
                 };
             };
             /** @description Unauthorized */
