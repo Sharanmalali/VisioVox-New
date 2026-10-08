@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { JobResponse, ProjectResponse } from '@visiovox/ts-client';
 
 import { ExportPanel } from '@/components/ExportPanel';
@@ -10,6 +10,7 @@ import { IconChevronDown, IconChevronRight, IconInfo } from '@/components/icons'
 import { Player } from '@/components/Player';
 import { ProcessingView } from '@/components/ProcessingView';
 import { SharePanel } from '@/components/SharePanel';
+import { TranscriptPanel } from '@/components/TranscriptPanel';
 import { AppPage, AppShell } from '@/components/shell/AppShell';
 import { Alert, Badge, Skeleton, Slab } from '@/components/ui';
 import { clockDuration, languageName, statusMeta } from '@/lib/format';
@@ -121,10 +122,33 @@ export default function ProjectPage() {
     };
   }, [projectId, project?.status]);
 
+  const names = project?.speaker_names ?? {};
   const speakers = Array.from({ length: project?.speaker_count ?? 0 }, (_, i) => ({
     ordinal: i + 1,
-    label: `Speaker ${String(i + 1)}`,
+    label: names[String(i + 1)] ?? `Speaker ${String(i + 1)}`,
   }));
+
+  // Optimistic: the name shows at once everywhere on the page, and is put back
+  // if the server refuses it (the chip then shows the field as invalid).
+  const renameSpeaker = useCallback(
+    async (ordinal: number, name: string | null) => {
+      const before = project;
+      if (before === null) return;
+      const key = String(ordinal);
+      const next = Object.fromEntries(
+        Object.entries(before.speaker_names ?? {}).filter(([k]) => k !== key),
+      );
+      if (name !== null) next[key] = name;
+      setProject({ ...before, speaker_names: next });
+      try {
+        setProject(await api().renameSpeaker(projectId, ordinal, name));
+      } catch (err) {
+        setProject(before);
+        throw err;
+      }
+    },
+    [project, projectId],
+  );
 
   return (
     <AppShell>
@@ -234,7 +258,17 @@ export default function ProjectPage() {
 
             {manifest !== null ? (
               <Slab className="p-4 sm:p-6">
-                <Player manifest={manifest} />
+                <Player
+                  manifest={manifest}
+                  names={project.speaker_names ?? {}}
+                  aside={(context) => (
+                    <TranscriptPanel
+                      context={context}
+                      title={project.title}
+                      onRename={renameSpeaker}
+                    />
+                  )}
+                />
               </Slab>
             ) : (
               project.status === 'ready' && <Skeleton className="aspect-video w-full" />

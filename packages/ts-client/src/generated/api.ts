@@ -301,6 +301,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/speakers/{ordinal}/name": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Rename Speaker
+         * @description Name a speaker ("Speaker 2" -> "Priya"), or clear the name.
+         */
+        put: operations["rename_speaker_v1_projects__project_id__speakers__ordinal__name_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/upload/complete": {
         parameters: {
             query?: never;
@@ -645,12 +665,21 @@ export interface components {
             overlap_ratio: number | null;
             /** Speaker Count */
             speaker_count: number | null;
+            /** Speaker Names */
+            speaker_names?: {
+                [key: string]: string;
+            };
             /** Status */
             status: string;
             /** Title */
             title: string;
             /** Warnings */
             warnings: string[];
+        };
+        /** RenameSpeakerRequest */
+        RenameSpeakerRequest: {
+            /** Name */
+            name: string | null;
         };
         /**
          * RenditionOption
@@ -1747,6 +1776,60 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rename_speaker_v1_projects__project_id__speakers__ordinal__name_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ordinal: number;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameSpeakerRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectResponse"];
+                };
             };
             /** @description Unauthorized */
             401: {

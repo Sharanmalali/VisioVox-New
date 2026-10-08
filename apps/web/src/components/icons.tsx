@@ -310,6 +310,61 @@ export const IconGithub = (p: IconProps) => (
   </Svg>
 );
 
+export const IconSearch = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Svg>
+);
+
+export const IconPencil = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16v4Z" />
+    <path d="m13.5 6.5 4 4" />
+  </Svg>
+);
+
+export const IconCopy = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="8" y="8" width="12" height="12" rx="2" />
+    <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />
+  </Svg>
+);
+
+export const IconChevronUp = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="m6 15 6-6 6 6" />
+  </Svg>
+);
+
+export const IconFileText = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" />
+    <path d="M14 3v5h5" />
+    <path d="M9 13h6M9 17h6" />
+  </Svg>
+);
+
+export const IconCrosshair = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+  </Svg>
+);
+
+export const IconChart = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+  </Svg>
+);
+
+export const IconLanguages = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 5h9M8.5 3v2M6 5c.7 3.3 3 6 6 7.5M11 5c-.8 3.8-3.4 7-7 8.5" />
+    <path d="m13 21 4-10 4 10M14.5 17.5h5" />
+  </Svg>
+);
+
 // ------------------------------------------------------------------- brand --
 
 /** The mark: four voices, each its own bar, in the four speaker hues. */

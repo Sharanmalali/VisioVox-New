@@ -12,7 +12,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import APIRouter, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    FastAPI,
+    Header,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -43,8 +53,10 @@ from .schemas import (
     JobStageResponse,
     ProjectListResponse,
     ProjectResponse,
+    RenameSpeakerRequest,
     UserResponse,
 )
+from .speakers import clean_name, speaker_ordinals
 
 API_PREFIX = "/v1"
 
@@ -217,6 +229,7 @@ def _project_response(p: Project) -> ProjectResponse:
         difficulty=p.difficulty,
         warnings=list(p.warnings or []),
         created_at=p.created_at,
+        speaker_names=dict(p.speaker_names or {}),
     )
 
 
@@ -301,6 +314,28 @@ async def list_projects(
 
 @projects.get("/{project_id}")
 async def get_project(project: OwnedProject) -> ProjectResponse:
+    return _project_response(project)
+
+
+@projects.put("/{project_id}/speakers/{ordinal}/name")
+async def rename_speaker(
+    project: OwnedProject,
+    session: SessionDep,
+    body: RenameSpeakerRequest,
+    ordinal: Annotated[int, Path(ge=1, le=8)],
+) -> ProjectResponse:
+    """Name a speaker ("Speaker 2" -> "Priya"), or clear the name."""
+    if ordinal not in speaker_ordinals(project.manifest):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no such speaker")
+    names = dict(project.speaker_names or {})
+    name = clean_name(body.name)
+    if name is None:
+        names.pop(str(ordinal), None)
+    else:
+        names[str(ordinal)] = name
+    # A new dict, so SQLAlchemy sees the JSONB change.
+    project.speaker_names = names
+    await session.commit()
     return _project_response(project)
 
 

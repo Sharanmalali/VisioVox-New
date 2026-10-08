@@ -135,6 +135,12 @@ class Project(Base):
     has_video: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     # Spoken language for captions (visiovox_api.languages); None = detect.
     language: Mapped[str | None] = mapped_column(Text)
+    # Names a person gave the speakers, keyed by ordinal ("1" -> "Priya").
+    # Applied to the manifest as it is served (visiovox_api.speakers), so the
+    # player, share page and transcript all read one source.
+    speaker_names: Mapped[dict[str, str]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
 
     speaker_count: Mapped[int | None] = mapped_column(Integer)
     overlap_ratio: Mapped[float | None] = mapped_column(Float)

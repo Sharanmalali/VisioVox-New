@@ -101,6 +101,13 @@ class ProjectResponse(BaseModel):
     difficulty: str | None
     warnings: list[str]
     created_at: dt.datetime
+    # Ordinal ("1") -> the name a person gave that speaker.
+    speaker_names: dict[str, str] = Field(default_factory=dict)
+
+
+class RenameSpeakerRequest(StrictModel):
+    # null or blank restores the default "Speaker N".
+    name: Annotated[str, StringConstraints(max_length=60)] | None
 
 
 class ProjectListResponse(BaseModel):

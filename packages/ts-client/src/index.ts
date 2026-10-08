@@ -156,6 +156,14 @@ export class VisioVoxClient {
     return this.request<unknown>(`/v1/projects/${id}/manifest`);
   }
 
+  /** Name a speaker by ordinal; null or blank restores "Speaker N". */
+  renameSpeaker(id: string, ordinal: number, name: string | null): Promise<ProjectResponse> {
+    return this.request<ProjectResponse>(`/v1/projects/${id}/speakers/${String(ordinal)}/name`, {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    });
+  }
+
   // ---- upload ----
 
   /**

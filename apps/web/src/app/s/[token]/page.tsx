@@ -147,7 +147,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
         </div>
 
         <div className="rounded-[var(--radius-lg)] border border-border-subtle bg-bg-surface p-4 shadow-sm sm:p-6">
-          <SharePlayer manifest={data.manifest} />
+          <SharePlayer manifest={data.manifest} title={data.title} />
         </div>
 
         <div className="flex flex-col items-start justify-between gap-4 rounded-[var(--radius-lg)] border border-border-subtle bg-bg-surface p-5 shadow-sm sm:flex-row sm:items-center">

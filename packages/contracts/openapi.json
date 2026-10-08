@@ -519,6 +519,13 @@
             ],
             "title": "Speaker Count"
           },
+          "speaker_names": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Speaker Names",
+            "type": "object"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -549,6 +556,26 @@
           "created_at"
         ],
         "title": "ProjectResponse",
+        "type": "object"
+      },
+      "RenameSpeakerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": ["name"],
+        "title": "RenameSpeakerRequest",
         "type": "object"
       },
       "RenditionOption": {
@@ -2161,6 +2188,89 @@
         },
         "summary": "Revoke Share",
         "tags": ["share"]
+      }
+    },
+    "/v1/projects/{project_id}/speakers/{ordinal}/name": {
+      "put": {
+        "description": "Name a speaker (\"Speaker 2\" -> \"Priya\"), or clear the name.",
+        "operationId": "rename_speaker_v1_projects__project_id__speakers__ordinal__name_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ordinal",
+            "required": true,
+            "schema": {
+              "maximum": 8,
+              "minimum": 1,
+              "title": "Ordinal",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSpeakerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Rename Speaker",
+        "tags": ["projects"]
       }
     },
     "/v1/projects/{project_id}/upload/complete": {

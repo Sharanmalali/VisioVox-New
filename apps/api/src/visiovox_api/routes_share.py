@@ -37,6 +37,7 @@ from .schemas import (
     ShareResponse,
 )
 from .security import hash_password, verify_password
+from .speakers import with_names
 
 router = APIRouter(prefix="/v1", tags=["share"])
 
@@ -201,7 +202,7 @@ async def open_share(
     row.last_accessed_at = dt.datetime.now(dt.UTC)
     await session.commit()
 
-    manifest: dict[str, Any] = dict(project.manifest)
+    manifest: dict[str, Any] = with_names(dict(project.manifest), project.speaker_names)
     # A share scoped to one speaker must not hand over the others' audio. The
     # manifest is the authorisation for the media, so it is filtered here rather
     # than hidden in the player.

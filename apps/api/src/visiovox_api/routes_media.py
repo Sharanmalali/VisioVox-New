@@ -49,6 +49,7 @@ from .schemas import (
     UploadPartsResponse,
     UploadStatusResponse,
 )
+from .speakers import with_names
 from .storage import ObjectStore, StorageError
 
 logger = logging.getLogger(__name__)
@@ -444,7 +445,8 @@ async def get_manifest(project: OwnedProject) -> dict[str, Any]:
             status_code=status.HTTP_409_CONFLICT,
             detail=f"project is {project.status}; no manifest yet",
         )
-    return await sign_manifest(dict(project.manifest), get_settings())
+    named = with_names(dict(project.manifest), project.speaker_names)
+    return await sign_manifest(named, get_settings())
 
 
 @router.get("/{project_id}/events")

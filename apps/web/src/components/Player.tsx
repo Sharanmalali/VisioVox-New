@@ -15,6 +15,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { AudioMode, Manifest, PlaybackHint, Speaker, TrackId } from '@/lib/playback/manifest';
 import { MIXED_TRACK, hasNaturalMode } from '@/lib/playback/manifest';
 import type { CaptionIndex, CaptionSegment } from '@/lib/playback/captions';
@@ -29,6 +30,23 @@ import type { EngineState, PlaybackEngine } from '@/lib/playback/engine';
 import { WebAudioSyncEngine } from '@/lib/playback/web-audio-engine';
 import { HlsSyncEngine } from '@/lib/playback/hls-engine';
 import { MAX_AV_OFFSET_MS, resolveEngine } from '@/lib/playback/sync';
+import type { TranscriptLine } from '@/lib/playback/transcript';
+import { mergeTranscript } from '@/lib/playback/transcript';
+
+/** What a side panel (the transcript) can read from and do to the player. */
+export interface PlayerAsideContext {
+  readonly lines: readonly TranscriptLine[];
+  /** False until every speaker's captions have been fetched (or failed). */
+  readonly captionsReady: boolean;
+  readonly mediaMs: number;
+  readonly activeId: TrackId;
+  readonly ready: boolean;
+  readonly speakers: readonly Speaker[];
+  readonly nameOf: (ordinal: number) => string;
+  readonly seekToMs: (ms: number) => void;
+  /** Switch to this line's speaker, jump to it, and play. */
+  readonly playLine: (line: TranscriptLine) => void;
+}
 
 interface PlayerProps {
   readonly manifest: Manifest;
@@ -39,9 +57,17 @@ interface PlayerProps {
    * would decode a two-hour recording into memory.
    */
   readonly forceEngine?: PlaybackHint;
+  /**
+   * Names by ordinal ("1" -> "Priya"), overriding the manifest's labels. The
+   * project page passes these so a rename shows at once, without refetching
+   * the manifest and reloading every audio track.
+   */
+  readonly names?: Readonly<Record<string, string>>;
+  /** A panel beside the player, given the player's state (the transcript). */
+  readonly aside?: (context: PlayerAsideContext) => ReactNode;
 }
 
-export function Player({ manifest, forceEngine }: PlayerProps): React.JSX.Element {
+export function Player({ manifest, forceEngine, names, aside }: PlayerProps): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
 
@@ -54,6 +80,7 @@ export function Player({ manifest, forceEngine }: PlayerProps): React.JSX.Elemen
   const [error, setError] = useState<string | null>(null);
   const [engineState, setEngineState] = useState<EngineState>('idle');
   const [captions, setCaptions] = useState<Record<string, CaptionIndex>>({});
+  const [captionsReady, setCaptionsReady] = useState(false);
 
   const engineKind = useMemo(
     () => forceEngine ?? resolveEngine(manifest, typeof AudioContext !== 'undefined'),
@@ -127,6 +154,7 @@ export function Player({ manifest, forceEngine }: PlayerProps): React.JSX.Elemen
       );
       if (cancelled) return;
       setCaptions(Object.fromEntries(entries.filter((e) => e !== null)));
+      setCaptionsReady(true);
     }
     void loadCaptions();
     return () => {
@@ -169,7 +197,29 @@ export function Player({ manifest, forceEngine }: PlayerProps): React.JSX.Elemen
   const activeIndex = captions[activeId] ?? EMPTY_CAPTION_INDEX;
   const segment = segmentAt(activeIndex, mediaMs);
 
-  return (
+  const nameOf = useCallback(
+    (ordinal: number): string => {
+      if (names !== undefined) return names[String(ordinal)] ?? `Speaker ${String(ordinal)}`;
+      return (
+        manifest.speakers.find((s) => s.ordinal === ordinal)?.label ?? `Speaker ${String(ordinal)}`
+      );
+    },
+    [names, manifest],
+  );
+
+  const lines = useMemo(() => mergeTranscript(manifest.speakers, captions), [manifest, captions]);
+
+  const playLine = useCallback(
+    (line: TranscriptLine): void => {
+      const speaker = manifest.speakers.find((s) => s.id === line.speakerId);
+      if (speaker?.extraction_ok === true) select(speaker.id);
+      seekToMs(line.start_ms);
+      void videoRef.current?.play().catch(() => undefined);
+    },
+    [manifest, select, seekToMs],
+  );
+
+  const player = (
     <div className="player stack">
       <div className="stage">
         {/* `muted` is set by the engine, not here. WebAudio mutes the element
@@ -206,6 +256,7 @@ export function Player({ manifest, forceEngine }: PlayerProps): React.JSX.Elemen
         activeId={activeId}
         ready={ready}
         onSelect={select}
+        nameOf={nameOf}
       />
 
       <CaptionView segment={segment} mediaMs={mediaMs} onSeek={seekToMs} />
@@ -262,6 +313,26 @@ export function Player({ manifest, forceEngine }: PlayerProps): React.JSX.Elemen
       </div>
     </div>
   );
+
+  if (aside === undefined) return player;
+  return (
+    <div className="player-grid">
+      {player}
+      <div className="player-aside">
+        {aside({
+          lines,
+          captionsReady,
+          mediaMs,
+          activeId,
+          ready,
+          speakers: manifest.speakers,
+          nameOf,
+          seekToMs,
+          playLine,
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ----------------------------------------------------------------- speaker rail
@@ -271,9 +342,16 @@ interface SpeakerRailProps {
   readonly activeId: TrackId;
   readonly ready: boolean;
   readonly onSelect: (id: TrackId) => void;
+  readonly nameOf: (ordinal: number) => string;
 }
 
-function SpeakerRail({ speakers, activeId, ready, onSelect }: SpeakerRailProps): React.JSX.Element {
+function SpeakerRail({
+  speakers,
+  activeId,
+  ready,
+  onSelect,
+  nameOf,
+}: SpeakerRailProps): React.JSX.Element {
   return (
     <div className="rail" role="radiogroup" aria-label="Speaker">
       {speakers.map((speaker) => (
@@ -298,8 +376,11 @@ function SpeakerRail({ speakers, activeId, ready, onSelect }: SpeakerRailProps):
               {String(speaker.ordinal)}
             </span>
           )}
-          <span className="rail-label">{speaker.label}</span>
+          <span className="rail-label">{nameOf(speaker.ordinal)}</span>
           <span className="rail-meta muted">
+            {nameOf(speaker.ordinal) !== `Speaker ${String(speaker.ordinal)}`
+              ? `Speaker ${String(speaker.ordinal)} · `
+              : ''}
             {String(Math.round(speaker.speaking_ratio * 100))}% ·{' '}
             {speaker.modality === 'audio_only' ? 'no face' : 'face + voice'}
           </span>
