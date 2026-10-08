@@ -13,6 +13,8 @@ Three corrections were needed, each measured before it was made. (i)~\emph{Who i
 \subsection{The extractor on real meetings}
 Table~\ref{tab:amiav} summarises AV-MossFormer2 through stages S5 and S3 on all 30 meetings. Where the face is visible it helps on real overlapped speech: $+3.48$\dB SI-SDRi over the frames in which the speaker and someone else are both inside aligned words. But 14.4\% of all speech is spoken while the speaker's face is not tracked (20 of 114 speakers are covered for under 90\% of their speech, six never), the 120 seats yield 152 people because tracks of one person are not always merged, and when its own person is silent an output is only 3.8\dB below the mixture. Whole-clip STOI~\cite{taal2011stoi} falls from 0.65 to 0.54. PESQ is not reported: ITU-T P.862 is specified for 8--12\,s samples, not two-minute conversations.
 
+\textbf{Merging by face.} Table~\ref{tab:amiav} uses the original voice-only merge rule, and the split people trace to it: an extracted track carries the room, which blurs its voice print, whereas the extractor's own face crop contains nobody else. Merging time-disjoint tracks when their ArcFace~\cite{deng2019arcface} embeddings match (Section~\ref{sec:system}), with the threshold fitted on the 20 fitting meetings by a rule fixed in advance (fewest split people plus twice the wrong merges), turns 49 people for the 38 held-out seats that have speaking tracks (11 split, one wrongly merged) into 38, with none split and none wrongly merged. Every threshold from 0.3 to 0.6 gave no wrong merge on the fitting meetings. The deployed S3 now uses this rule.
+
 \begin{table}[t]
 \centering
 \caption{AV-MossFormer2 (S5+S3) on 30 AMI-AV meetings. SI-SDRi (dB) with 95\% bootstrap intervals.}
