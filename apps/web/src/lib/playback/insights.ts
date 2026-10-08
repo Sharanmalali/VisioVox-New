@@ -201,26 +201,20 @@ export function computeInsights(
   }
 
   let holder: number | null = null;
-  let turnStart = 0;
-  let turnEnd = 0;
-  const closeTurn = (): void => {
-    if (holder === null) return;
-    const t = get(holder);
-    t.longest_turn_ms = Math.max(t.longest_turn_ms, turnEnd - turnStart);
-  };
   for (const s of [...spurts].sort(byStart)) {
     if (backchannelStarts.has(`${String(s.speaker)}:${String(s.start)}`)) continue;
-    if (s.speaker === holder) {
-      turnEnd = Math.max(turnEnd, s.end);
-      continue;
-    }
-    closeTurn();
+    if (s.speaker === holder) continue;
     holder = s.speaker;
-    turnStart = s.start;
-    turnEnd = s.end;
     get(s.speaker).turns += 1;
   }
-  closeTurn();
+
+  // The longest stretch of speech without a pause - not the longest turn,
+  // which during sustained overlap spans the gaps while the other person
+  // talks and so can exceed the speaker's whole talk time.
+  for (const s of spurts) {
+    const t = get(s.speaker);
+    t.longest_turn_ms = Math.max(t.longest_turn_ms, s.end - s.start);
+  }
 
   let totalTalk = 0;
   for (const t of stats.values()) totalTalk += t.talk_ms;

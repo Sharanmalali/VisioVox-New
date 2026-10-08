@@ -186,21 +186,18 @@ def compute(
             stats[e.by].backchannels += 1
 
     holder: int | None = None
-    turn_start = turn_end = 0
     for s in sorted(spurts, key=lambda s: (s.start, s.speaker)):
-        if (s.speaker, s.start) in backchannel_starts:
+        if (s.speaker, s.start) in backchannel_starts or s.speaker == holder:
             continue
-        if s.speaker == holder:
-            turn_end = max(turn_end, s.end)
-            continue
-        if holder is not None:
-            t = stats[holder]
-            t.longest_turn_ms = max(t.longest_turn_ms, turn_end - turn_start)
-        holder, turn_start, turn_end = s.speaker, s.start, s.end
+        holder = s.speaker
         stats[s.speaker].turns += 1
-    if holder is not None:
-        t = stats[holder]
-        t.longest_turn_ms = max(t.longest_turn_ms, turn_end - turn_start)
+
+    # The longest stretch of speech without a pause - not the longest turn,
+    # which during sustained overlap spans the gaps while the other person
+    # talks and so can exceed the speaker's whole talk time.
+    for s in spurts:
+        t = stats[s.speaker]
+        t.longest_turn_ms = max(t.longest_turn_ms, s.duration)
 
     total_talk = sum(t.talk_ms for t in stats.values())
     for t in stats.values():

@@ -35,12 +35,26 @@ export function insightsFor(
   ordinals: readonly number[],
   durationMs: number,
   activity: PlayerAsideContext['activity'],
-): Insights {
+): PanelInsights {
   const words = intervalsFromLines(lines, ordinals);
-  if (activity === null) return computeInsights(words, durationMs);
+  const byWords = computeInsights(words, durationMs);
+  // Pace is words over the time those words took, both from the captions:
+  // dividing caption words by diarized talk time mixes two clocks.
+  const pace = new Map(
+    [...byWords.speakers.values()].map((s) => [
+      s.speaker,
+      s.talk_ms < 5000 || s.words === 0 ? null : s.words / (s.talk_ms / 60_000),
+    ]),
+  );
+  if (activity === null) return { ...byWords, pace };
   const counts = new Map([...words].map(([o, ws]) => [o, ws.length]));
-  return computeInsights(activity, durationMs, counts);
+  return { ...computeInsights(activity, durationMs, counts), pace };
 }
+
+export type PanelInsights = Insights & {
+  /** Words per minute while speaking, from the captions; null if too little. */
+  readonly pace: ReadonlyMap<number, number | null>;
+};
 
 function seconds(ms: number): string {
   const s = ms / 1000;
@@ -53,20 +67,19 @@ function percent(x: number): string {
 }
 
 /** Words per minute while actually speaking. */
-function pace(s: SpeakerStats): string {
-  if (s.talk_ms < 5000 || s.words === 0) return '—';
-  return String(Math.round(s.words / (s.talk_ms / 60_000)));
+function paceText(wpm: number | null | undefined): string {
+  return wpm === null || wpm === undefined ? '—' : String(Math.round(wpm));
 }
 
 /** The table the Word export puts above the transcript. */
-export function insightBlocks(ins: Insights, nameOf: (o: number) => string): DocBlock[] {
+export function insightBlocks(ins: PanelInsights, nameOf: (o: number) => string): DocBlock[] {
   const rows = [...ins.speakers.values()]
     .sort((a, b) => b.talk_ms - a.talk_ms)
     .map((s) => [
       nameOf(s.speaker),
       `${seconds(s.talk_ms)} (${percent(s.share)})`,
       String(s.turns),
-      pace(s),
+      paceText(ins.pace.get(s.speaker)),
       String(s.interruptions_made),
       String(s.interruptions_received),
     ]);
@@ -161,7 +174,7 @@ export function InsightsPanel({
       <Timeline ins={ins} ordinals={ordinals} nameOf={nameOf} context={context} mediaMs={mediaMs} />
 
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <PeopleTable stats={stats} nameOf={nameOf} />
+        <PeopleTable stats={stats} pace={ins.pace} nameOf={nameOf} />
         <Moments events={ins.events} nameOf={nameOf} context={context} />
       </div>
     </section>
@@ -388,9 +401,11 @@ function Timeline({
 
 function PeopleTable({
   stats,
+  pace,
   nameOf,
 }: {
   stats: readonly SpeakerStats[];
+  pace: ReadonlyMap<number, number | null>;
   nameOf: (o: number) => string;
 }) {
   return (
@@ -403,7 +418,7 @@ function PeopleTable({
               <th>Person</th>
               <th>Talk time</th>
               <th title="Times this person took the floor">Turns</th>
-              <th title="Longest stretch without someone else taking over">Longest</th>
+              <th title="Longest stretch of speech without a pause">Longest stretch</th>
               <th title="Words per minute while speaking">Pace</th>
               <th title="Interrupted someone / was interrupted">Interrupted · by</th>
             </tr>
@@ -425,8 +440,10 @@ function PeopleTable({
                   {s.longest_turn_ms > 0 ? seconds(s.longest_turn_ms) : '—'}
                 </td>
                 <td className="tabular">
-                  {pace(s)}
-                  {pace(s) !== '—' && <span className="text-fg-muted"> wpm</span>}
+                  {paceText(pace.get(s.speaker))}
+                  {paceText(pace.get(s.speaker)) !== '—' && (
+                    <span className="text-fg-muted"> wpm</span>
+                  )}
                 </td>
                 <td className="tabular">
                   {s.interruptions_made} · {s.interruptions_received}
