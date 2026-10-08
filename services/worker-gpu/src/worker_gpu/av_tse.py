@@ -28,7 +28,7 @@ import json
 import logging
 import os
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -54,6 +54,14 @@ ACTIVE_FRAME_DB = -30.0
 # ECAPA cosine above which two time-disjoint tracks are one person. Same-speaker
 # pairs typically score 0.6-0.8, different speakers under 0.3.
 DEFAULT_MERGE_THRESHOLD = 0.6
+# ArcFace cosine above which two time-disjoint tracks are one person, and below
+# which a voice match is not allowed to merge them. Fitted on the 20 AMI-AV
+# fitting meetings (scripts/bench_ami_identity.py): every threshold from 0.3 to
+# 0.6 gave no wrong merges, and 0.3 left no person split. On the 10 held-out
+# meetings it took 49 people for 38 seats (voice alone) to 38, with no wrong
+# merge. The veto never changed a result there, so it is off.
+DEFAULT_FACE_THRESHOLD = 0.3
+DEFAULT_FACE_VETO: float | None = None
 # Search window for the container offset. Encoder delays are tens of ms; a
 # second of slack covers any muxer oddity without letting a repeated phrase
 # produce a false match.
@@ -275,16 +283,31 @@ def group_speakers(
     tracks: list[FaceTrack],
     embed: Callable[[np.ndarray], np.ndarray] | None,
     threshold: float = DEFAULT_MERGE_THRESHOLD,
+    faces: Mapping[int, np.ndarray | None] | None = None,
+    face_threshold: float = DEFAULT_FACE_THRESHOLD,
+    face_veto: float | None = DEFAULT_FACE_VETO,
 ) -> list[Speaker]:
-    """Merge time-disjoint tracks whose voices match; order speakers left to right.
+    """Merge time-disjoint tracks of one person; order speakers left to right.
 
     Two tracks that overlap in time are two people by construction - one face
-    cannot be on screen twice - so they are never compared. Without an
-    embedder every track stays its own speaker: a split person is a nuisance,
-    two people merged into one is a wrong result.
+    cannot be on screen twice - so they are never compared. Otherwise a track
+    joins a person when its face matches theirs (`faces`: unit ArcFace vectors
+    by track index, pipeline/face_identity.py), or, where a face could not be
+    embedded, when its voice does. A clear face mismatch (below `face_veto`)
+    overrules a voice match. Without either embedding every track stays its own
+    speaker: a split person is a nuisance, two people merged into one is a
+    wrong result.
     """
     speakers: list[Speaker] = []
     vectors: dict[int, np.ndarray] = {}
+    face_of = dict(faces or {})
+
+    def face_score(sp: Speaker, track: FaceTrack) -> float | None:
+        f = face_of.get(track.index)
+        if f is None:
+            return None
+        scores = [float(f @ g) for t in sp.tracks if (g := face_of.get(t.index)) is not None]
+        return max(scores) if scores else None
 
     def vector(t: FaceTrack) -> np.ndarray | None:
         if embed is None:
@@ -298,17 +321,28 @@ def group_speakers(
         return vectors.get(t.index)
 
     for track in sorted(tracks, key=lambda t: t.start):
-        best, best_score = None, threshold
-        v = vector(track)
-        if v is not None:
-            for sp in speakers:
-                if sp.overlaps(track):
-                    continue
-                scores = [float(v @ u) for t in sp.tracks if (u := vector(t)) is not None]
-                if scores and max(scores) > best_score:
-                    best, best_score = sp, max(scores)
+        candidates = [sp for sp in speakers if not sp.overlaps(track)]
+        # Face first: the crop holds nobody else, the extracted voice does.
+        best, best_score, cue = None, face_threshold, "face"
+        for sp in candidates:
+            fs = face_score(sp, track)
+            if fs is not None and fs > best_score:
+                best, best_score = sp, fs
+        if best is None:
+            best_score, cue = threshold, "voice"
+            v = vector(track)
+            if v is not None:
+                for sp in candidates:
+                    fs = face_score(sp, track)
+                    if face_veto is not None and fs is not None and fs < face_veto:
+                        continue
+                    scores = [float(v @ u) for t in sp.tracks if (u := vector(t)) is not None]
+                    if scores and max(scores) > best_score:
+                        best, best_score = sp, max(scores)
         if best is not None:
-            logger.info("face track %d joins a speaker (voice match %.2f)", track.index, best_score)
+            logger.info(
+                "face track %d joins a speaker (%s match %.2f)", track.index, cue, best_score
+            )
             best.tracks.append(track)
         else:
             speakers.append(Speaker(tracks=[track]))

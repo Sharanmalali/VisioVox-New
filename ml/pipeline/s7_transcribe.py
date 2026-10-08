@@ -143,6 +143,30 @@ def load_transcriber(
     return model
 
 
+def detect_language(
+    audio: np.ndarray, model: Transcriber, segments: int = 4
+) -> tuple[str, float] | None:
+    """Whisper's language judgement on up to `segments` x 30 s of speech.
+
+    Used by scripts/bench_ami_language.py, not by the pipeline. Per-track
+    detection sometimes calls Dutch-accented English Dutch (7 of 117 AMI-AV
+    tracks), and Whisper then writes Dutch for what was said. Detecting once on
+    the whole recording was measured as the fix and is not one: it moved the
+    error to whole meetings and was worse on the held-out set (8 wrong tracks
+    against 3). A language chosen by the user is the dependable remedy.
+    None if the model cannot detect languages.
+    """
+    detect = getattr(model, "detect_language", None)
+    if detect is None or not np.any(audio):
+        return None
+    language, probability, _ = detect(
+        audio=np.asarray(audio, dtype=np.float32),
+        vad_filter=True,
+        language_detection_segments=segments,
+    )
+    return str(language), float(probability)
+
+
 def transcribe(
     audio: np.ndarray,
     model: Transcriber,

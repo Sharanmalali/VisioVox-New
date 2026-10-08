@@ -94,4 +94,41 @@ Attribution is the bottleneck, not separation: an oracle that knows who spoke
 each word reaches 45 % saWER on the same transcripts. A learned active-speaker
 detector on the face tracks is the obvious next step, and would also decide
 which words of an off-screen person belong to nobody on screen — today every
-word lands under some visible face.
+word lands under some visible face (§8 shows the audio cue cannot).
+
+## 6. Follow-up: face identity for track merging (2026-10-08, deployed)
+
+`scripts/bench_ami_identity.py` reruns the production S3 grouping on every
+meeting's cached extractor output. Seats are ground truth (a track's seat is
+where its face is). Speaking tracks only, so counts differ from §2.
+
+| | voice only (before) | face, then voice ([ADR-0018](adr/0018-face-identity-track-merging.md)) |
+|---|---|---|
+| Fitting meetings, 79 seats | 103 people · 24 splits · 2 wrong merges | 79 · 0 · 0 |
+| **Held-out meetings, 38 seats** | 49 people · 11 splits · 1 wrong merge | **38 · 0 · 0** |
+
+Threshold 0.3 by the pre-declared rule; every threshold from 0.3 to 0.6 gave no
+wrong merge on the fitting meetings. Live-site E2E on TS3009a: 4 speakers for 4
+people (voice alone gave 5).
+
+## 7. Follow-up: caption language (2026-10-08, measured, not changed)
+
+Whisper detects the language per track. On AMI-AV (English, spoken largely by
+Dutch speakers) 7 of 117 tracks were judged non-English (nl, et, is, cy), and
+those captions come out in that language — seen live: an English remark
+captioned in Dutch. Detecting once on the whole recording is not a fix: 0
+wrong tracks on the fitting meetings but 8 on the held-out ones (two meetings
+judged Dutch throughout) against 3 per track (`scripts/bench_ami_language.py`).
+The dependable remedy is a user-chosen language at upload, which needs a
+project field, API and UI work; open.
+
+## 8. Follow-up: off-screen speech by retention (2026-10-08, rejected)
+
+Can the retention of the track that kept a caption word tell that nobody on
+screen said it? `scripts/bench_ami_offscreen.py` labels each caption word
+on/off-screen from AMI words and face visibility. AUC of retention for
+off- vs on-screen words: 0.64 on the fitting meetings, **0.38 held-out** —
+no better than chance. Moving low-retention words (< −5 dB, fitted) to an
+"off-screen" caption stream lowers held-out saWER 78.2 → 73.7 % only by
+discarding uncertain words, and raises cpWER 68.7 → 78.0 %. Not deployed;
+off-screen attribution needs a visual active-speaker decision.
