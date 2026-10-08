@@ -165,14 +165,17 @@ export default function ProjectPage() {
                 <h1 className="min-w-0 truncate text-[28px] font-semibold tracking-[-0.025em] sm:text-[32px]">
                   {project.title}
                 </h1>
-                {(() => {
-                  const s = statusMeta(project.status);
-                  return (
-                    <Badge tone={s.tone} dot={s.live ? 'pulse' : true}>
-                      {s.label}
-                    </Badge>
-                  );
-                })()}
+                {/* While the job runs, ProcessingView shows the live status;
+                    this one comes from a slow poll and would contradict it. */}
+                {(progress === null || TERMINAL.has(progress.status)) &&
+                  (() => {
+                    const s = statusMeta(project.status);
+                    return (
+                      <Badge tone={s.tone} dot={s.live ? 'pulse' : true}>
+                        {s.label}
+                      </Badge>
+                    );
+                  })()}
               </div>
 
               {project.status === 'ready' && (

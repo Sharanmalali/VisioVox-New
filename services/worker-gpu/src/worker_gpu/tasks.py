@@ -292,6 +292,8 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
         project.overlap_ratio = output.overlap_ratio
         project.difficulty = output.difficulty
         project.warnings = output.warnings
+        if output.duration_ms:
+            project.duration_ms = output.duration_ms
         # The export ladder is derived from the source's height; without it
         # every project offers audio only, video or not.
         video = output.manifest.get("video") if output.manifest else None

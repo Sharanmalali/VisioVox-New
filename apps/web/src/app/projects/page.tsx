@@ -27,7 +27,9 @@ import type { ProjectResponse } from '@visiovox/ts-client';
 
 function ProjectRow({ p }: { p: ProjectResponse }) {
   const status = statusMeta(p.status);
-  const duration = clockDuration(p.duration_ms);
+  // Before processing finishes the stored length is a placeholder, not the
+  // probed one; show nothing rather than a wrong number.
+  const duration = p.status === 'ready' ? clockDuration(p.duration_ms) : null;
   const language = languageName(p.language);
   return (
     <li>

@@ -73,6 +73,9 @@ class PipelineOutput:
     difficulty: str | None
     warnings: list[str]
     gpu_seconds: float
+    # The probed length of the source. Upload completion writes a placeholder
+    # (the mock pipeline's timeline length); this replaces it with the truth.
+    duration_ms: int | None = None
 
 
 class PipelineError(RuntimeError):
@@ -340,6 +343,9 @@ def run_pipeline(
             difficulty=manifest.get("difficulty"),
             warnings=list(runner.report.warnings),
             gpu_seconds=runner.report.gpu_seconds,
+            duration_ms=round(facts.duration_seconds * 1000)
+            if facts.duration_seconds > 0
+            else None,
         )
     finally:
         # Invariant 3 / ADR-0008: face crops and embeddings go, whatever
