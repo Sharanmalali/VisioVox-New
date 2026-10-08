@@ -111,7 +111,7 @@ Threshold 0.3 by the pre-declared rule; every threshold from 0.3 to 0.6 gave no
 wrong merge on the fitting meetings. Live-site E2E on TS3009a: 4 speakers for 4
 people (voice alone gave 5).
 
-## 7. Follow-up: caption language (2026-10-08, measured, not changed)
+## 7. Follow-up: caption language (2026-10-08, user choice deployed)
 
 Whisper detects the language per track. On AMI-AV (English, spoken largely by
 Dutch speakers) 7 of 117 tracks were judged non-English (nl, et, is, cy), and
@@ -119,8 +119,17 @@ those captions come out in that language — seen live: an English remark
 captioned in Dutch. Detecting once on the whole recording is not a fix: 0
 wrong tracks on the fitting meetings but 8 on the held-out ones (two meetings
 judged Dutch throughout) against 3 per track (`scripts/bench_ami_language.py`).
-The dependable remedy is a user-chosen language at upload, which needs a
-project field, API and UI work; open.
+The dependable remedy is a user-chosen language at upload, now deployed
+(commit d86b0f9): a "Spoken language" picker, default "Detect automatically",
+offering exactly Whisper large-v3's 100 languages (`visiovox_api/languages.py`,
+pinned to faster-whisper's list by `tests/test_languages.py`), Indian languages
+first in their own scripts. India: Assamese, Bengali, Gujarati, Hindi, Kannada,
+Malayalam, Marathi, Nepali, Punjabi, Sanskrit, Sindhi, Tamil, Telugu, Urdu are
+covered; Odia, Maithili, Konkani, Kashmiri, Manipuri, Bodo, Dogri and Santali
+are not (the recognizer lacks them; an Indic model such as AI4Bharat's would be
+needed). Accuracy for the Indian languages has not been measured here. Live E2E
+on TS3009a with English chosen: all four speakers captioned in English, where
+automatic detection had captioned one in Dutch.
 
 ## 8. Follow-up: off-screen speech by retention (2026-10-08, rejected)
 
