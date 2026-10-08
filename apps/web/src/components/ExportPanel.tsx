@@ -16,7 +16,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { Alert, Badge, Button, Card, Spinner } from '@/components/ui';
+import { IconDownload, IconShare } from '@/components/icons';
+import { Alert, Badge, Button, Select, Slab, SlabHead, SpeakerDot, Spinner } from '@/components/ui';
 import { formatBytes } from '@/lib/upload/resumable';
 import { api } from '@/lib/store';
 import type { ExportResponse, RenditionOption } from '@visiovox/ts-client';
@@ -132,107 +133,109 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
   const videoOptions = options.filter((o) => o.kind === 'video');
 
   return (
-    <Card className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg">Download</h2>
-        {options.length === 0 && <Spinner label="Loading options" />}
-      </div>
-
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1.5 text-sm">
-          <span className="text-fg-secondary">Speaker</span>
-          <select
+    <Slab>
+      <SlabHead
+        icon={<IconDownload size={17} />}
+        label="Download"
+        description="Export one speaker as video or audio."
+        right={options.length === 0 ? <Spinner label="Loading options" /> : undefined}
+      />
+      <div className="flex flex-col gap-5 p-5 sm:p-6">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Select
+            label="Speaker"
             value={speaker}
             onChange={(e) => {
               setSpeaker(Number(e.target.value));
             }}
-            className="rounded-[var(--radius-sm)] border border-border-strong bg-bg-inset px-3 py-2"
           >
             {speakers.map((s) => (
               <option key={s.ordinal} value={s.ordinal}>
                 {s.label}
               </option>
             ))}
-          </select>
-        </label>
+          </Select>
 
-        <label className="flex flex-col gap-1.5 text-sm">
-          <span className="text-fg-secondary">Quality</span>
-          <select
+          <Select
+            label="Quality"
             value={quality}
             onChange={(e) => {
               setQuality(e.target.value);
             }}
-            className="rounded-[var(--radius-sm)] border border-border-strong bg-bg-inset px-3 py-2"
           >
             {videoOptions.map((o) => (
               <option key={o.name} value={o.name}>
-                {o.name}
+                {o.name} video
               </option>
             ))}
-            <option value="audio">Audio only</option>
-          </select>
-        </label>
+            <option value="audio">Audio only (M4A)</option>
+          </Select>
+        </div>
 
-        <Button onClick={() => void request()} loading={busy}>
+        <Button onClick={() => void request()} loading={busy} busyLabel="Preparing…" full>
           Prepare download
         </Button>
-      </div>
 
-      {videoOptions.length === 0 && options.length > 0 && (
-        <p className="text-xs text-fg-muted">
-          This recording has no video track, so only the isolated audio can be downloaded.
-        </p>
-      )}
+        {videoOptions.length === 0 && options.length > 0 && (
+          <p className="text-[13px] text-fg-muted">
+            This recording has no video track, so only the isolated audio can be downloaded.
+          </p>
+        )}
 
-      {error !== null && <Alert tone="danger">{error}</Alert>}
-      {shareNote !== null && <Alert tone="accent">{shareNote}</Alert>}
+        {error !== null && <Alert tone="danger">{error}</Alert>}
+        {shareNote !== null && <Alert tone="accent">{shareNote}</Alert>}
 
-      {exports.length > 0 && (
-        <ul className="flex flex-col gap-2">
-          {exports.map((row) => (
-            <li
-              key={row.id}
-              className="flex flex-wrap items-center gap-3 rounded-[var(--radius-sm)] border border-border-subtle px-3 py-2 text-sm"
-            >
-              <span>
-                {row.speaker_ordinal ? `Speaker ${String(row.speaker_ordinal)}` : 'All speakers'}
-                {row.quality ? ` · ${row.quality}` : ' · audio'}
-              </span>
-
-              {row.status === 'ready' ? (
-                <Badge tone="success">ready</Badge>
-              ) : row.status === 'failed' ? (
-                <Badge tone="danger">failed</Badge>
-              ) : (
-                <Badge tone="accent">{row.status}</Badge>
-              )}
-
-              {row.size_bytes !== null && (
-                <span className="tabular text-fg-muted">{formatBytes(row.size_bytes)}</span>
-              )}
-
-              {row.status === 'ready' && (
-                <span className="ml-auto flex gap-2">
-                  <Button size="sm" variant="secondary">
-                    <a href={downloadUrl(row)} download>
-                      Download
-                    </a>
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => void share(row)}>
-                    Share
-                  </Button>
+        {exports.length > 0 && (
+          <ul className="flex flex-col divide-y divide-border-subtle rounded-[var(--radius-md)] border border-border-subtle">
+            {exports.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+                <SpeakerDot index={row.speaker_ordinal ?? 1} size={10} />
+                <span className="font-medium">
+                  {row.speaker_ordinal ? `Speaker ${String(row.speaker_ordinal)}` : 'All speakers'}
                 </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+                <span className="text-fg-muted">{row.quality ? row.quality : 'audio'}</span>
+                {row.size_bytes !== null && (
+                  <span className="font-mono text-[12px] text-fg-muted">
+                    {formatBytes(row.size_bytes)}
+                  </span>
+                )}
 
-      <p className="text-xs text-fg-muted">
-        Downloads are prepared once and kept for 7 days. Asking again returns the same file rather
-        than re-encoding it.
-      </p>
-    </Card>
+                <span className="ml-auto flex items-center gap-2">
+                  {row.status === 'ready' ? (
+                    <>
+                      <a
+                        href={downloadUrl(row)}
+                        download
+                        className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border-default bg-bg-surface px-3 text-[13px] font-medium shadow-xs transition-colors hover:border-border-strong hover:bg-bg-subtle"
+                      >
+                        <IconDownload size={14} />
+                        Download
+                      </a>
+                      <Button size="sm" variant="ghost" onClick={() => void share(row)}>
+                        <IconShare size={14} />
+                        Share
+                      </Button>
+                    </>
+                  ) : row.status === 'failed' ? (
+                    <Badge tone="danger" dot>
+                      Failed
+                    </Badge>
+                  ) : (
+                    <Badge tone="accent" dot="pulse">
+                      {row.status === 'running' ? 'Rendering' : 'Queued'}
+                    </Badge>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <p className="text-[12.5px] leading-relaxed text-fg-muted">
+          Downloads are prepared once and kept for 7 days. Asking again returns the same file rather
+          than re-encoding it.
+        </p>
+      </div>
+    </Slab>
   );
 }

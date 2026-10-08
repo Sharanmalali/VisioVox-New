@@ -12,7 +12,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { Alert, Badge, Button, Card } from '@/components/ui';
+import { IconArrowUpRight, IconCheck, IconLink } from '@/components/icons';
+import { Alert, Badge, Button, Select, Slab, SlabHead } from '@/components/ui';
 import { api } from '@/lib/store';
 import type { ShareResponse } from '@visiovox/ts-client';
 
@@ -90,92 +91,103 @@ export function SharePanel({
   const live = shares.filter((s) => s.revoked_at === null);
 
   return (
-    <Card className="flex flex-col gap-4">
-      <h2 className="text-lg">Share</h2>
-
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1.5 text-sm">
-          <span className="text-fg-secondary">Who to share</span>
-          <select
-            value={speaker}
-            onChange={(e) => {
-              setSpeaker(e.target.value);
-            }}
-            className="rounded-[var(--radius-sm)] border border-border-strong bg-bg-inset px-3 py-2"
-          >
-            <option value="all">Everyone</option>
-            {speakers.map((s) => (
-              <option key={s.ordinal} value={String(s.ordinal)}>
-                {s.label} only
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button onClick={() => void create()} loading={busy}>
+    <Slab>
+      <SlabHead
+        icon={<IconLink size={17} />}
+        label="Share"
+        description="Anyone with the link can watch — no account needed."
+      />
+      <div className="flex flex-col gap-5 p-5 sm:p-6">
+        <Select
+          label="Who to share"
+          value={speaker}
+          onChange={(e) => {
+            setSpeaker(e.target.value);
+          }}
+        >
+          <option value="all">Everyone (all speakers)</option>
+          {speakers.map((s) => (
+            <option key={s.ordinal} value={String(s.ordinal)}>
+              {s.label} only
+            </option>
+          ))}
+        </Select>
+        <Button onClick={() => void create()} loading={busy} busyLabel="Creating…" full>
+          <IconLink size={16} />
           Create link
         </Button>
-      </div>
 
-      {error !== null && <Alert tone="danger">{error}</Alert>}
+        {error !== null && <Alert tone="danger">{error}</Alert>}
 
-      {fresh !== null && (
-        <Alert tone="accent" title="Link created">
-          <p className="mb-2 break-all font-mono text-xs">{fresh}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="secondary" onClick={() => void copy(fresh)}>
-              {copied ? 'Copied' : 'Copy link'}
-            </Button>
-            <Button size="sm" variant="secondary">
+        {fresh !== null && (
+          <div className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[color-mix(in_srgb,var(--success)_30%,transparent)] bg-success-soft p-4">
+            <p className="text-sm font-semibold text-success">Link created</p>
+            <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-border-default bg-bg-surface py-1.5 pl-3 pr-1.5">
+              <span className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{fresh}</span>
+              <Button
+                size="sm"
+                variant={copied ? 'secondary' : 'primary'}
+                onClick={() => void copy(fresh)}
+              >
+                {copied ? <IconCheck size={14} /> : null}
+                {copied ? 'Copied' : 'Copy'}
+              </Button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <a
                 href={`https://wa.me/?text=${encodeURIComponent(`${projectTitle} — ${fresh}`)}`}
                 target="_blank"
                 rel="noopener noreferrer"
+                className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border-default bg-bg-surface px-3 text-[13px] font-medium shadow-xs transition-colors hover:border-border-strong"
               >
-                WhatsApp
+                Send on WhatsApp
+                <IconArrowUpRight size={13} />
               </a>
-            </Button>
-          </div>
-          <p className="mt-2 text-xs">
-            Copy it now — only a hash is stored, so it cannot be shown again.
-          </p>
-        </Alert>
-      )}
-
-      {live.length > 0 && (
-        <ul className="flex flex-col gap-2">
-          {live.map((row) => (
-            <li
-              key={row.id}
-              className="flex flex-wrap items-center gap-3 rounded-[var(--radius-sm)] border border-border-subtle px-3 py-2 text-sm"
-            >
-              <span>
-                {row.speaker_ordinal !== null
-                  ? `Speaker ${String(row.speaker_ordinal)}`
-                  : 'Everyone'}
+              <span className="text-[12.5px] text-fg-secondary">
+                Copy it now — only a hash is stored, so it cannot be shown again.
               </span>
-              <Badge>{row.access_count} views</Badge>
-              {row.expires_at !== null && (
-                <span className="text-xs text-fg-muted">
-                  expires {new Date(row.expires_at).toLocaleDateString()}
-                </span>
-              )}
-              <Button
-                size="sm"
-                variant="ghost"
-                className="ml-auto"
-                onClick={() => void revoke(row.id)}
-              >
-                Revoke
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
+            </div>
+          </div>
+        )}
 
-      <p className="text-xs text-fg-muted">
-        Anyone with a link can watch without an account. Revoking takes effect immediately and
-        cannot be undone. Shared pages are never indexed by search engines.
-      </p>
-    </Card>
+        {live.length > 0 && (
+          <div className="flex flex-col gap-2">
+            <p className="text-[13px] font-medium text-fg-secondary">Active links</p>
+            <ul className="flex flex-col divide-y divide-border-subtle rounded-[var(--radius-md)] border border-border-subtle">
+              {live.map((row) => (
+                <li key={row.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
+                  <span className="font-medium">
+                    {row.speaker_ordinal !== null
+                      ? `Speaker ${String(row.speaker_ordinal)}`
+                      : 'Everyone'}
+                  </span>
+                  <Badge>
+                    {row.access_count} view{row.access_count === 1 ? '' : 's'}
+                  </Badge>
+                  {row.expires_at !== null && (
+                    <span className="text-[12.5px] text-fg-muted">
+                      Expires {new Date(row.expires_at).toLocaleDateString()}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    className="ml-auto"
+                    onClick={() => void revoke(row.id)}
+                  >
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <p className="text-[12.5px] leading-relaxed text-fg-muted">
+          Revoking takes effect immediately and cannot be undone. Shared pages are never indexed by
+          search engines.
+        </p>
+      </div>
+    </Slab>
   );
 }

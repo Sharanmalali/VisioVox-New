@@ -1,27 +1,46 @@
 'use client';
 
 /**
- * The console. Everything after sign-in happens here.
+ * Studio. Everything after sign-in starts here.
  *
- * INGEST, PREVIEW and VAULT are faces of one machine, so they are tabs over
- * shared state rather than routes: a job started on one face is still running
- * when you look at another, and a route change would throw that away.
+ * Upload and Preview are faces of one job, so they are tabs over shared state
+ * rather than routes: a job started on one is still running when you look at
+ * the other, and a route change would throw that away.
  *
- * Nothing on this screen is theatre. The chunk counter is the real part count
- * from the resumable uploader, the telemetry lines are appended from real
- * upload and job events, and the estimate is the server's, not a guess made
- * here. When the machine does not know how long something will take, it says
- * so rather than inventing a bar that creeps.
+ * Nothing on this screen is theatre. The byte counts come from the resumable
+ * uploader, the activity lines are appended from real upload and job events,
+ * and the estimate is measured, not invented. When the machine does not know
+ * how long something will take, it says so.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { ConsoleChrome, Module, type Tab } from '@/components/console/ConsoleChrome';
 import { TelemetryLog, type LogLine } from '@/components/console/TelemetryLog';
+import {
+  IconCloudUpload,
+  IconFileVideo,
+  IconFolder,
+  IconPlay,
+  IconShare,
+  IconSparkles,
+  IconUpload,
+} from '@/components/icons';
 import { LanguageSelect } from '@/components/LanguageSelect';
 import { Player } from '@/components/Player';
-import { Alert, Badge, Key, Progress, cx } from '@/components/ui';
-import { signOutEverywhere } from '@/lib/firebase';
+import { AppPage, AppShell, PageHeader } from '@/components/shell/AppShell';
+import {
+  Alert,
+  Badge,
+  ButtonLink,
+  EmptyState,
+  Key,
+  Progress,
+  Skeleton,
+  Slab,
+  SlabHead,
+  Tabs,
+  cx,
+} from '@/components/ui';
 import { STAGE_MESSAGE, formatElapsed, journey } from '@/lib/journey';
 import type { Manifest } from '@/lib/playback/manifest';
 import { accessToken, api, useSession } from '@/lib/store';
@@ -37,8 +56,7 @@ import type { LimitsResponse } from '@visiovox/ts-client';
 
 import { useRouter } from 'next/navigation';
 
-/** The part size the uploader actually uses; shown so the number is not a claim. */
-const PART_MIB = 16;
+type Tab = 'ingest' | 'preview';
 
 interface JobEvent {
   status: string;
@@ -60,7 +78,6 @@ export default function StudioPage() {
   const router = useRouter();
   const signedIn = useSession((s) => s.signedIn);
   const ready = useSession((s) => s.ready);
-  const email = useSession((s) => s.email);
   const hydrate = useSession((s) => s.hydrate);
 
   const [tab, setTab] = useState<Tab>('ingest');
@@ -109,7 +126,7 @@ export default function StudioPage() {
   }, [ready, signedIn, router]);
 
   // What the server will accept right now, computed from live headroom rather
-  // than a constant — the whole point of D2.
+  // than a constant.
   useEffect(() => {
     if (!signedIn) return;
     api()
@@ -121,10 +138,8 @@ export default function StudioPage() {
   }, [signedIn]);
 
   // ------------------------------------------------------------- job feed --
-  // The job row is created when the upload completes. Opened before that - as
-  // this once was, the moment the project existed - the stream is answered
-  // "no job yet", closes, and never comes back: the bar then only moved in
-  // the poll's 5 s steps, with no stage names.
+  // The job row is created when the upload completes. Opened before that, the
+  // stream is answered "no job yet", closes, and never comes back.
   const uploadDone = progress?.phase === 'done';
   useEffect(() => {
     if (projectId === null || !uploadDone) return;
@@ -167,8 +182,7 @@ export default function StudioPage() {
 
   // The stream above is the fast path. This is the one that cannot be lost: a
   // proxy that buffers text/event-stream, a dropped connection or a stream
-  // that ended before the job did would otherwise leave the page at its last
-  // event for good - never reaching `ready`, never offering the preview.
+  // that ended before the job did would otherwise leave the page stuck.
   useEffect(() => {
     if (projectId === null || !uploadDone) return;
     let stopped = false;
@@ -340,7 +354,7 @@ export default function StudioPage() {
   const jobDone = job !== null && TERMINAL.has(job.status);
 
   // One reading of where the video is, shared by the bar, the checklist and
-  // the status line, so none of them can say something the others do not.
+  // the status badge, so none of them can say something the others do not.
   const trip = journey({
     uploadPhase: progress?.phase ?? null,
     uploadFraction: progress?.fraction ?? 0,
@@ -350,265 +364,352 @@ export default function StudioPage() {
   const maxBytes = limits?.max_upload_bytes ?? null;
   const tooBig = file !== null && maxBytes !== null && file.size > maxBytes;
 
-  const status =
+  const status: {
+    label: string;
+    tone: 'neutral' | 'accent' | 'success' | 'danger';
+    live: boolean;
+  } =
     error !== null || trip.failed
-      ? 'Needs attention'
+      ? { label: 'Needs attention', tone: 'danger', live: false }
       : trip.finished
-        ? 'Ready'
+        ? { label: 'Ready', tone: 'success', live: false }
         : progress !== null
-          ? `${trip.label} · ${String(trip.percent)}%`
-          : 'Idle';
+          ? { label: `${trip.label} · ${String(trip.percent)}%`, tone: 'accent', live: true }
+          : { label: 'Idle', tone: 'neutral', live: false };
 
   if (!ready) {
     return (
-      <div className="grid min-h-[60vh] place-items-center">
-        <p className="etch">Checking your session…</p>
-      </div>
+      <AppShell>
+        <AppPage>
+          <Skeleton className="h-10 w-64" />
+          <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
+            <Skeleton className="h-80" />
+            <Skeleton className="h-80" />
+          </div>
+        </AppPage>
+      </AppShell>
     );
   }
 
+  const fileState = tooBig
+    ? { label: 'Too large', tone: 'danger' as const }
+    : trip.failed
+      ? { label: 'Needs attention', tone: 'danger' as const }
+      : trip.finished
+        ? { label: 'Ready', tone: 'success' as const }
+        : uploading
+          ? { label: 'Uploading', tone: 'accent' as const }
+          : uploaded
+            ? { label: 'Processing', tone: 'accent' as const }
+            : { label: 'Not started', tone: 'neutral' as const };
+
   return (
-    <ConsoleChrome
-      tab={tab}
-      onTab={setTab}
-      email={email}
-      status={status}
-      onSignOut={() => {
-        void signOutEverywhere().then(() => {
-          router.replace('/login');
-        });
-      }}
-    >
-      {tab === 'ingest' && (
-        <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
-          <Module
-            label="Ingestion node"
-            tone="bone"
-            right={`${String(PART_MIB)} MB / chunk`}
-            bodyClassName="p-5"
-          >
-            {file === null ? (
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragging(true);
-                }}
-                onDragLeave={() => {
-                  setDragging(false);
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragging(false);
-                  const dropped = e.dataTransfer.files[0];
-                  if (dropped) choose(dropped);
-                }}
-                className={cx(
-                  'flex flex-col items-center justify-center gap-4 border-2 border-dashed px-6 py-16 text-center transition-colors',
-                  dragging ? 'border-acid bg-acid/5' : 'border-dust/40',
-                )}
-              >
-                <p className="display text-2xl text-chalk">Drop a recording</p>
-                <p className="font-mono text-[12px] text-dust">
-                  {maxBytes === null
-                    ? 'Checking available space…'
-                    : `Up to ${formatBytes(maxBytes)}`}{' '}
-                  · sliced in the browser, streamed direct to storage
-                </p>
-                <Key
-                  tone="bone"
-                  onClick={() => {
-                    inputRef.current?.click();
-                  }}
-                >
-                  Choose file
-                </Key>
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept="video/*,audio/*"
-                  className="sr-only"
-                  onChange={(e) => {
-                    const picked = e.target.files?.[0];
-                    if (picked) choose(picked);
-                  }}
-                />
-              </div>
-            ) : (
-              <div className="flex flex-col gap-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-mono text-sm text-chalk">{file.name}</p>
-                    <p className="mt-1 font-mono text-[11px] text-dust">
-                      {formatBytes(file.size)}
-                      {inspected?.durationSeconds != null &&
-                        ` · ${formatDuration(inspected.durationSeconds)}`}
-                      {inspected?.width != null &&
-                        ` · ${String(inspected.width)}×${String(inspected.height ?? 0)}`}
-                    </p>
-                  </div>
-                  <Badge
-                    tone={tooBig || trip.failed ? 'danger' : trip.finished ? 'success' : 'neutral'}
-                  >
-                    {tooBig
-                      ? 'Too large'
-                      : trip.failed
-                        ? 'Needs attention'
-                        : trip.finished
-                          ? 'Ready'
-                          : uploading
-                            ? 'Uploading'
-                            : uploaded
-                              ? 'Processing'
-                              : 'Not started'}
-                  </Badge>
-                </div>
+    <AppShell>
+      <AppPage>
+        <PageHeader
+          title="Studio"
+          description="Upload a recording and watch it get separated, live. Your video lands in Preview the moment it is ready."
+          actions={
+            <Badge tone={status.tone} dot={status.live ? 'pulse' : true}>
+              {status.label}
+            </Badge>
+          }
+        />
 
-                {tooBig && (
-                  <Alert tone="danger" title="Larger than this machine can take right now">
-                    The limit is {formatBytes(maxBytes)}, computed from free space on the media
-                    volume. It rises again when other jobs finish.
-                  </Alert>
-                )}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Tabs<Tab>
+            label="Studio"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { id: 'ingest', label: 'Upload', icon: <IconUpload size={15} /> },
+              {
+                id: 'preview',
+                label: 'Preview',
+                icon: <IconPlay size={14} />,
+                badge:
+                  succeeded && tab !== 'preview' ? (
+                    <span className="h-1.5 w-1.5 rounded-full bg-success" aria-label="ready" />
+                  ) : undefined,
+              },
+            ]}
+          />
+          <ButtonLink href="/projects" variant="ghost" size="sm">
+            <IconFolder size={16} />
+            All projects
+          </ButtonLink>
+        </div>
 
-                {progress !== null && (
-                  <div className="flex flex-col gap-3">
-                    {/* The whole journey in one bar, named by the same step as the
-                        checklist beside it (lib/journey.ts). The upload is its
-                        first tenth; the server's percentage fills the rest. */}
-                    <Progress
-                      value={trip.percent}
-                      label={
-                        trip.failed
-                          ? `Stopped at: ${trip.current.title}`
-                          : trip.finished
-                            ? 'Ready to watch'
-                            : trip.label
-                      }
-                      tone={trip.failed ? 'warning' : 'success'}
-                    />
-                    {uploading && (
-                      <div className="flex flex-wrap justify-between gap-3 font-mono text-[11px] text-dust">
-                        <span>
-                          {formatBytes(progress.fraction * file.size)} of {formatBytes(file.size)}
-                        </span>
-                        <span>
-                          {progress.bytesPerSecond === null
-                            ? 'measuring speed…'
-                            : `${formatBytes(progress.bytesPerSecond)}/s`}
-                        </span>
-                        <span>
-                          {/* Null until the rate means something, rather than a
-                              confident number that is wrong for the first seconds. */}
-                          {progress.secondsRemaining === null
-                            ? 'estimating…'
-                            : `${formatDuration(progress.secondsRemaining)} left`}
-                        </span>
-                      </div>
+        {tab === 'ingest' && (
+          <div className="grid items-start gap-6 lg:grid-cols-[1.3fr_1fr]">
+            <Slab>
+              <SlabHead
+                icon={<IconCloudUpload size={17} />}
+                label="New recording"
+                description="Video with the speakers’ faces on screen works best."
+              />
+              <div className="p-5 sm:p-6">
+                {file === null ? (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setDragging(true);
+                    }}
+                    onDragLeave={() => {
+                      setDragging(false);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragging(false);
+                      const dropped = e.dataTransfer.files[0];
+                      if (dropped) choose(dropped);
+                    }}
+                    className={cx(
+                      'flex flex-col items-center justify-center gap-4 rounded-[var(--radius-lg)] border-2 border-dashed px-6 py-16 text-center transition-[border-color,background-color] duration-200',
+                      dragging
+                        ? 'border-accent bg-accent-soft'
+                        : 'border-border-default bg-bg-subtle hover:border-border-strong',
                     )}
-                  </div>
-                )}
-
-                {error !== null && <Alert tone="danger">{error}</Alert>}
-
-                {progress === null && (
-                  <LanguageSelect
-                    languages={limits?.caption_languages}
-                    value={language}
-                    onChange={setLanguage}
-                  />
-                )}
-
-                <div className="flex flex-wrap gap-3">
-                  {progress === null && (
-                    <Key tone="crimson" disabled={tooBig} onClick={() => void begin()}>
-                      Begin separation
-                    </Key>
-                  )}
-                  {jobDone && projectId !== null && (
+                  >
+                    <span className="grid h-14 w-14 place-items-center rounded-[var(--radius-md)] border border-border-subtle bg-bg-surface text-accent shadow-sm">
+                      <IconCloudUpload size={26} />
+                    </span>
+                    <div className="flex flex-col gap-1">
+                      <p className="text-lg font-semibold">Drop a recording here</p>
+                      <p className="text-sm text-fg-muted">
+                        {maxBytes === null
+                          ? 'Checking available space…'
+                          : `Up to ${formatBytes(maxBytes)} · up to ${String(Math.round((limits?.max_duration_seconds ?? 3600) / 60))} minutes`}
+                      </p>
+                    </div>
                     <Key
-                      tone="acid"
+                      tone="secondary"
                       onClick={() => {
-                        setTab('preview');
+                        inputRef.current?.click();
                       }}
                     >
-                      Open preview
+                      Browse files
                     </Key>
-                  )}
-                  <Key tone="ghost" onClick={reset}>
-                    {uploading ? 'Cancel' : 'Clear'}
+                    <input
+                      ref={inputRef}
+                      type="file"
+                      accept="video/*,audio/*"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const picked = e.target.files?.[0];
+                        if (picked) choose(picked);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-6">
+                    <div className="flex items-start gap-4 rounded-[var(--radius-md)] border border-border-subtle bg-bg-subtle p-4">
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-[var(--radius-sm)] bg-bg-surface text-fg-secondary shadow-sm ring-1 ring-border-subtle">
+                        <IconFileVideo size={20} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[15px] font-medium">{file.name}</p>
+                        <p className="mt-0.5 font-mono text-[12px] text-fg-muted">
+                          {formatBytes(file.size)}
+                          {inspected?.durationSeconds != null &&
+                            ` · ${formatDuration(inspected.durationSeconds)}`}
+                          {inspected?.width != null &&
+                            ` · ${String(inspected.width)}×${String(inspected.height ?? 0)}`}
+                        </p>
+                      </div>
+                      <Badge
+                        tone={fileState.tone}
+                        dot={fileState.tone === 'accent' ? 'pulse' : true}
+                      >
+                        {fileState.label}
+                      </Badge>
+                    </div>
+
+                    {tooBig && (
+                      <Alert tone="danger" title="Larger than we can take right now">
+                        The limit is {formatBytes(maxBytes)}, computed from free space on our media
+                        volume. It rises again when other jobs finish.
+                      </Alert>
+                    )}
+
+                    {progress !== null && (
+                      <div className="flex flex-col gap-3">
+                        {/* The whole journey in one bar, named by the same step as
+                            the checklist beside it (lib/journey.ts). */}
+                        <Progress
+                          value={trip.percent}
+                          label={
+                            trip.failed
+                              ? `Stopped at: ${trip.current.title}`
+                              : trip.finished
+                                ? 'Ready to watch'
+                                : trip.label
+                          }
+                          tone={trip.failed ? 'warning' : trip.finished ? 'success' : 'accent'}
+                        />
+                        {uploading && (
+                          <div className="flex flex-wrap justify-between gap-3 font-mono text-[12px] text-fg-muted">
+                            <span>
+                              {formatBytes(progress.fraction * file.size)} of{' '}
+                              {formatBytes(file.size)}
+                            </span>
+                            <span>
+                              {progress.bytesPerSecond === null
+                                ? 'measuring speed…'
+                                : `${formatBytes(progress.bytesPerSecond)}/s`}
+                            </span>
+                            <span>
+                              {progress.secondsRemaining === null
+                                ? 'estimating…'
+                                : `${formatDuration(progress.secondsRemaining)} left`}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {error !== null && <Alert tone="danger">{error}</Alert>}
+
+                    {progress === null && (
+                      <LanguageSelect
+                        languages={limits?.caption_languages}
+                        value={language}
+                        onChange={setLanguage}
+                      />
+                    )}
+
+                    <div className="flex flex-wrap gap-3 border-t border-border-subtle pt-5">
+                      {progress === null && (
+                        <Key
+                          tone="primary"
+                          size="lg"
+                          disabled={tooBig}
+                          onClick={() => void begin()}
+                        >
+                          <IconSparkles size={17} />
+                          Begin separation
+                        </Key>
+                      )}
+                      {jobDone && projectId !== null && (
+                        <Key
+                          tone="primary"
+                          size="lg"
+                          onClick={() => {
+                            setTab('preview');
+                          }}
+                        >
+                          <IconPlay size={15} />
+                          Open preview
+                        </Key>
+                      )}
+                      <Key tone="secondary" size="lg" onClick={reset}>
+                        {uploading
+                          ? 'Cancel upload'
+                          : progress !== null
+                            ? 'New recording'
+                            : 'Clear'}
+                      </Key>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Slab>
+
+            <Slab>
+              <SlabHead
+                label="Activity"
+                description="What is happening to your video, as it happens."
+                right={
+                  progress !== null && !trip.finished && !trip.failed ? (
+                    <Badge tone="accent" dot="pulse">
+                      Live
+                    </Badge>
+                  ) : undefined
+                }
+              />
+              <TelemetryLog lines={lines} steps={trip.states} />
+            </Slab>
+          </div>
+        )}
+
+        {tab === 'preview' && (
+          <div className="flex flex-col gap-6">
+            {projectId === null ? (
+              <EmptyState
+                icon={<IconPlay size={22} />}
+                title="Nothing to preview yet"
+                action={
+                  <div className="flex flex-wrap justify-center gap-3">
+                    <Key
+                      tone="primary"
+                      onClick={() => {
+                        setTab('ingest');
+                      }}
+                    >
+                      <IconUpload size={16} />
+                      Upload a recording
+                    </Key>
+                    <ButtonLink href="/projects" variant="secondary">
+                      Open a past project
+                    </ButtonLink>
+                  </div>
+                }
+              >
+                Upload a recording, or open one you have already separated.
+              </EmptyState>
+            ) : !jobDone ? (
+              <Slab>
+                <SlabHead
+                  label="Still separating"
+                  description="The player appears here as soon as it is ready — no need to leave this page."
+                />
+                <div className="p-6">
+                  <Progress value={trip.percent} label={trip.label} />
+                </div>
+              </Slab>
+            ) : succeeded ? (
+              <>
+                {manifest !== null ? (
+                  <Slab className="p-4 sm:p-6">
+                    <Player manifest={manifest} />
+                  </Slab>
+                ) : error !== null ? (
+                  <Alert tone="danger" title="The result could not be loaded">
+                    {error}
+                  </Alert>
+                ) : (
+                  <div className="flex flex-col gap-4">
+                    <Skeleton className="aspect-video w-full" />
+                    <Skeleton className="h-24 w-full" />
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center justify-between gap-4 rounded-[var(--radius-lg)] border border-border-subtle bg-bg-surface px-5 py-4 shadow-sm">
+                  <div>
+                    <p className="text-[15px] font-semibold">Download or share</p>
+                    <p className="text-sm text-fg-muted">
+                      Export any speaker as video or audio, or send a revocable link.
+                    </p>
+                  </div>
+                  <Key
+                    tone="primary"
+                    onClick={() => {
+                      router.push(`/projects/${projectId}`);
+                    }}
+                  >
+                    <IconShare size={16} />
+                    Downloads and sharing
                   </Key>
                 </div>
-              </div>
+              </>
+            ) : (
+              <Alert tone="danger" title="This recording could not be separated">
+                The job ended {job.status}. Open it from your projects for the stage that stopped
+                it. VisioVox needs the speakers&apos; faces on screen to tell their voices apart.
+              </Alert>
             )}
-          </Module>
-
-          <Module label="Activity" tone="crimson" right="live" bodyClassName="p-0">
-            <TelemetryLog lines={lines} steps={trip.states} />
-          </Module>
-        </div>
-      )}
-
-      {tab === 'preview' && (
-        <Module label="Preview module" tone="acid">
-          {projectId === null ? (
-            <p className="font-mono text-[12px] text-dust">
-              Nothing loaded. Ingest a recording, or open one from the vault.
-            </p>
-          ) : !jobDone ? (
-            // Still going: say where it is, and that the player lands here.
-            <div className="flex flex-col gap-4">
-              <p className="font-mono text-[12px] text-dust">
-                Still separating. The player appears here as soon as it is ready - no need to leave
-                this page.
-              </p>
-              <Progress value={trip.percent} label={trip.label} tone="success" />
-            </div>
-          ) : succeeded ? (
-            <div className="flex flex-col gap-4">
-              {manifest !== null ? (
-                <Player manifest={manifest} />
-              ) : error !== null ? (
-                <Alert tone="danger" title="The result could not be loaded">
-                  {error}
-                </Alert>
-              ) : (
-                <p className="font-mono text-[12px] text-dust">Loading the player…</p>
-              )}
-              <Key
-                tone="acid"
-                onClick={() => {
-                  router.push(`/projects/${projectId}`);
-                }}
-              >
-                Downloads and sharing
-              </Key>
-            </div>
-          ) : (
-            <Alert tone="danger" title="This recording could not be separated">
-              The job ended {job.status}. Open it from the vault for the stage that stopped it.
-              VisioVox needs the speakers&apos; faces on screen to tell their voices apart.
-            </Alert>
-          )}
-        </Module>
-      )}
-
-      {tab === 'vault' && (
-        <Module label="Vault" tone="bone">
-          <div className="flex flex-col gap-4">
-            <p className="font-mono text-[12px] text-dust">
-              Everything you have separated, with its retention clock.
-            </p>
-            <Key
-              tone="bone"
-              onClick={() => {
-                router.push('/projects');
-              }}
-            >
-              Open the vault
-            </Key>
           </div>
-        </Module>
-      )}
-    </ConsoleChrome>
+        )}
+      </AppPage>
+    </AppShell>
   );
 }

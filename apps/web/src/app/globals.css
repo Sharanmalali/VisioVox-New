@@ -1,39 +1,40 @@
 @import 'tailwindcss';
 @import './tokens.css';
 
-/* Tailwind v4 reads its scale from @theme. Mapping it onto the same custom
- * properties the hand-written CSS uses means there is exactly one palette:
- * a utility class and a component class cannot drift apart. */
+/* Tailwind reads its scale from @theme. Mapping it onto the same custom
+ * properties the hand-written CSS uses means there is exactly one palette, and
+ * both themes switch by changing variables rather than class names. */
 @theme inline {
-  /* The console, in the vocabulary the components are written in. */
-  --color-void: var(--void);
-  --color-panel: var(--panel);
-  --color-raised: var(--raised);
-  --color-edge: var(--edge);
-  --color-acid: var(--acid);
-  --color-acid-hot: var(--acid-hot);
-  --color-crimson: var(--crimson);
-  --color-crimson-hot: var(--crimson-hot);
-  --color-chalk: var(--chalk);
-  --color-dust: var(--dust);
-
   --color-bg-base: var(--bg-base);
+  --color-bg-subtle: var(--bg-subtle);
   --color-bg-surface: var(--bg-surface);
   --color-bg-elevated: var(--bg-elevated);
   --color-bg-inset: var(--bg-inset);
+  --color-bg-overlay: var(--bg-overlay);
 
   --color-border-subtle: var(--border-subtle);
+  --color-border-default: var(--border-default);
   --color-border-strong: var(--border-strong);
 
   --color-fg-primary: var(--fg-primary);
   --color-fg-secondary: var(--fg-secondary);
   --color-fg-muted: var(--fg-muted);
+  --color-fg-on-accent: var(--fg-on-accent);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-fg: var(--primary-fg);
 
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+
   --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
   --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
   --color-contested: var(--contested);
 
   --color-spk-1: var(--spk-1);
@@ -42,25 +43,42 @@
   --color-spk-4: var(--spk-4);
   --color-spk-mixed: var(--spk-mixed);
 
+  --color-brand-1: var(--brand-1);
+  --color-brand-2: var(--brand-2);
+  --color-brand-3: var(--brand-3);
+
+  /* The previous console vocabulary, kept as aliases so nothing that still
+   * says `text-dust` renders unstyled during the migration. */
+  --color-void: var(--bg-base);
+  --color-panel: var(--bg-surface);
+  --color-raised: var(--bg-elevated);
+  --color-edge: var(--border-default);
+  --color-acid: var(--accent);
+  --color-crimson: var(--danger);
+  --color-chalk: var(--fg-primary);
+  --color-dust: var(--fg-muted);
+
+  --radius-xs: var(--radius-xs);
   --radius-sm: var(--radius-sm);
   --radius-md: var(--radius-md);
   --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
 
-  --font-sans: var(--font-mono);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+
+  --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
   --font-display: var(--font-display);
+
+  --ease-out-expo: var(--ease-out);
 }
 
-/* Aliases kept deliberately. The player shipped against these names and is
- * ~1200 tested lines; repointing them at the token palette migrates the colours
- * without touching a single component.
- *
- * --panel is NOT redeclared here. It is a real token now, and this file is
- * imported after tokens.css, so `--panel: var(--bg-surface)` would win the
- * cascade and pair with `--bg-surface: var(--panel)` to form a cycle. A cyclic
- * custom property is invalid at computed-value time, which resolves to
- * transparent rather than failing loudly - every slab painted see-through and
- * the decorative backing slabs showed through the terminal. */
+/* Aliases the player was written against; repointing them migrates its
+ * colours without touching its tested markup. */
 :root {
   --bg: var(--bg-base);
   --border: var(--border-subtle);
@@ -70,53 +88,149 @@
   --warn: var(--warning);
 }
 
-* {
-  box-sizing: border-box;
+/* ===================================================================== base */
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    /* Anchored sections land below the sticky header, not under it. */
+    scroll-padding-top: 5rem;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background: var(--bg-base);
+    color: var(--fg-primary);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.6;
+    font-feature-settings:
+      'cv11' 1,
+      'ss01' 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    transition: background-color var(--dur-normal) var(--ease-out);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    margin: 0;
+    font-weight: 650;
+    letter-spacing: -0.022em;
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+
+  p {
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  img,
+  video,
+  svg {
+    display: block;
+  }
+
+  /* One reset for every button; components and player classes give the look.
+   * A plain <button> must never inherit a loud style it did not ask for. */
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type='range'] {
+    accent-color: var(--accent);
+  }
+
+  /* A visible focus ring everywhere, not only where someone remembered it. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-xs);
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+    color: var(--fg-primary);
+  }
+
+  /* Quiet scrollbars that still read as scrollbars. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-default) transparent;
+  }
 }
 
-html {
-  /* Anchor navigation should not slam; the header is sticky. */
-  scroll-behavior: smooth;
+/* ================================================================ utilities */
+
+.container-x {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
 }
 
-body {
-  margin: 0;
-  background: var(--bg-base);
-  color: var(--fg-primary);
-  font-family: var(--font-mono);
-  font-size: 15px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* The hairline grid the rack is mounted on. On <body> rather than a wrapper so
- * it runs edge to edge under everything, including a short page. */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-image:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: var(--grid-size) var(--grid-size);
+@media (min-width: 640px) {
+  .container-x {
+    padding-inline: 2rem;
+  }
 }
 
 .display {
   font-family: var(--font-display);
-  font-weight: 800;
-  letter-spacing: -0.02em;
+  font-weight: 650;
+  letter-spacing: -0.035em;
+  line-height: 1.04;
 }
 
-/* A label etched into a panel: small, wide-tracked, shouting quietly. */
+/* A small label above a heading: quiet, tracked, never shouting. */
+.eyebrow,
 .etch {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  letter-spacing: 0.18em;
   color: var(--fg-muted);
+}
+
+.text-gradient {
+  background: linear-gradient(100deg, var(--brand-1) 10%, var(--brand-2) 50%, var(--brand-3) 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* Timecodes, byte counts and metrics must not jitter as digits change. */
@@ -131,155 +245,6 @@ time,
   font-family: var(--font-mono);
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-/* A visible focus ring everywhere, not only where someone remembered it. */
-/* Three pixels and offset, because a two-pixel ring disappears against a
- * four-pixel black edge. */
-:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 0;
-}
-
-::selection {
-  background: var(--acid);
-  color: var(--edge);
-}
-
-.header {
-  display: flex;
-  gap: 1.5rem;
-  align-items: center;
-  padding: 0.85rem 1.25rem;
-  background: var(--panel);
-  border-bottom: var(--stroke) solid var(--edge);
-}
-
-.brand {
-  font-family: var(--font-display);
-  font-weight: 800;
-  font-size: 1.15rem;
-  letter-spacing: -0.02em;
-  color: var(--chalk);
-}
-
-.header nav a {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--fg-muted);
-}
-
-.header nav a:hover {
-  color: var(--acid);
-}
-
-.main {
-  max-width: 60rem;
-  margin: 0 auto;
-  padding: 2rem 1.25rem;
-}
-
-/* A slab: bolted down with a black edge, standing off the void by its own
- * hard offset. No blur anywhere - blur would make it a shadow, and the point
- * is that it is an extrusion. */
-.panel {
-  background: var(--bg-surface);
-  border: var(--stroke) solid var(--edge);
-  border-radius: 0;
-  box-shadow: var(--depth-md);
-  padding: 1.25rem;
-}
-
-.stack > * + * {
-  margin-top: 0.9rem;
-}
-
-label {
-  display: block;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-  color: var(--fg-muted);
-  margin-bottom: 0.5rem;
-}
-
-/* Recessed rather than raised, so the eye reads it as somewhere to put
- * something in. The inset offset is the key's extrusion turned inside out. */
-input[type='email'],
-input[type='password'],
-input[type='text'] {
-  width: 100%;
-  padding: 0.75rem 1rem;
-  border-radius: 0;
-  box-shadow: var(--depth-inset);
-  border: var(--stroke) solid var(--edge);
-  background: var(--bg-inset);
-  color: var(--fg-primary);
-  font: inherit;
-}
-
-input:focus-visible {
-  border-color: var(--acid);
-  outline-offset: 0;
-}
-
-/* In @layer base, not unlayered. Tailwind emits its utilities inside a cascade
- * layer, and unlayered CSS beats every layered rule whatever its specificity -
- * so as a bare rule this silently overrode bg-bg-surface, bg-transparent and
- * the rest, painting all four Button variants as primary accent. Layered, it
- * still styles a plain <button> and loses to any utility, which is what makes
- * the variants mean anything. */
-@layer base {
-  /* A key. Uppercase mono on a coloured face, four-pixel black edge, standing
-   * off its surface - and on press it travels exactly its own offset so it
-   * lands flush, which is the whole illusion.
-   *
-   * In @layer base, not unlayered: Tailwind emits utilities inside a cascade
-   * layer, and unlayered CSS beats every layered rule whatever its
-   * specificity, so as a bare rule this silently overrode every variant. */
-  button {
-    padding: 0.75rem 1.25rem;
-    border: var(--stroke) solid var(--edge);
-    border-radius: 0;
-    background: var(--acid);
-    color: var(--edge);
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    cursor: pointer;
-    box-shadow: var(--depth-md);
-    transition:
-      transform var(--dur-press) ease-out,
-      box-shadow var(--dur-press) ease-out,
-      background-color var(--dur-press) ease-out;
-  }
-
-  button:hover:not(:disabled) {
-    background: var(--acid-hot);
-  }
-
-  /* Travels its own offset, so it sits flush with the panel. */
-  button:active:not(:disabled) {
-    transform: translate(var(--lift-md), var(--lift-md));
-    box-shadow: var(--depth-none);
-  }
-
-  button:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    transform: none;
-  }
-}
-
 .muted {
   color: var(--fg-muted);
 }
@@ -289,6 +254,143 @@ input:focus-visible {
   font-size: 0.9rem;
 }
 
+/* The engineering grid behind marketing heroes, faded at the edges. */
+.bg-grid {
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 40%, transparent 100%);
+}
+
+.glow-backdrop {
+  background:
+    radial-gradient(40% 50% at 30% 20%, var(--glow-1), transparent 70%),
+    radial-gradient(35% 45% at 75% 30%, var(--glow-2), transparent 70%);
+}
+
+/* Frosted chrome for sticky bars. */
+.glass {
+  background: color-mix(in srgb, var(--bg-base) 78%, transparent);
+  backdrop-filter: saturate(1.6) blur(14px);
+  -webkit-backdrop-filter: saturate(1.6) blur(14px);
+}
+
+.hairline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-default), transparent);
+}
+
+/* --------------------------------------------------------------- motion -- */
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-fade-up {
+  animation: fade-up 700ms var(--ease-out) both;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-inset) 25%,
+    color-mix(in srgb, var(--bg-inset) 55%, var(--border-default)) 50%,
+    var(--bg-inset) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+@keyframes pulse-soft {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.ticker {
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}
+
+/* The equaliser bars in the hero demo and the "now playing" chip. */
+@keyframes eq {
+  0%,
+  100% {
+    transform: scaleY(0.25);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq 1.1s ease-in-out infinite;
+}
+
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
+.progress-indeterminate {
+  animation: indeterminate 1.4s var(--ease-inout) infinite;
+}
+
+/* Functionality is unchanged without motion; only the motion goes. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .animate-fade-up,
+  .skeleton,
+  .ticker,
+  .eq-bar,
+  .progress-indeterminate {
+    animation: none;
+  }
+
+  .eq-bar {
+    transform: scaleY(0.6);
+  }
+}
+
+/* ===================================================== legacy layout helpers
+   Still used by the demo page and the player; restyled, not removed. */
+
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1.5rem;
+}
+
+.stack > * + * {
+  margin-top: 1rem;
+}
+
 .row {
   display: flex;
   gap: 0.75rem;
@@ -296,32 +398,38 @@ input:focus-visible {
   justify-content: space-between;
 }
 
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 550;
+  padding: 0.15rem 0.6rem;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-default);
+  color: var(--fg-secondary);
+  background: var(--bg-subtle);
+}
+
+.badge.ready {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: var(--success-soft);
+}
+
 .bar {
-  height: 8px;
+  height: 6px;
   background: var(--bg-inset);
   border-radius: var(--radius-full);
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
 }
 
 .bar > span {
   display: block;
   height: 100%;
   background: var(--accent);
+  border-radius: inherit;
   transition: width var(--dur-normal) var(--ease-out);
-}
-
-.badge {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-subtle);
-  color: var(--fg-muted);
-}
-
-.badge.ready {
-  color: var(--success);
-  border-color: var(--success);
 }
 
 table {
@@ -332,64 +440,105 @@ table {
 td,
 th {
   text-align: left;
-  padding: 0.5rem 0.4rem;
+  padding: 0.65rem 0.75rem;
   border-bottom: 1px solid var(--border-subtle);
-  font-size: 0.9rem;
+  font-size: 0.875rem;
 }
 
-/* ---------------------------------------------------------------- player --
+th {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.code-block {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  overflow-x: auto;
+}
+
+/* ===================================================================== player
    The restrained surface (docs/28 §D1). The speaker rail is the product's one
    irreducible interaction, so it gets the affordances: a real focus ring, a
    selected state legible without colour alone, and hit targets worth clicking.
-   Nothing here glows. */
+   Nothing here glows - the user is judging audio, and decoration competes. */
+
+.player {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.player.stack > * + * {
+  margin-top: 0;
+}
 
 .stage {
-  background: oklch(0 0 0);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  position: relative;
+  background: #000;
+  border-radius: var(--radius-lg);
   overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  /* A hairline so the frame holds its edge on a black page in dark mode. */
+  outline: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
+  outline-offset: -1px;
 }
 
 .stage-video,
 .stage-audio-only video {
   display: block;
   width: 100%;
-  max-height: 60vh;
-  background: oklch(0 0 0);
+  max-height: 64vh;
+  background: #000;
 }
 
 .stage-audio-only {
   padding: 1rem;
+  background: var(--bg-surface);
 }
 
 .rail {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
-  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.75rem;
 }
 
 .rail-item {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.35rem;
-  padding: 0.6rem;
+  gap: 0.4rem;
+  padding: 0.65rem;
   text-align: left;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--fg-primary);
-  font-weight: 400;
+  box-shadow: var(--shadow-xs);
   cursor: pointer;
   /* Matches the audio crossfade exactly, so the switch is one event. */
   transition:
     border-color var(--dur-instant) var(--ease-out),
-    box-shadow var(--dur-instant) var(--ease-out);
+    box-shadow var(--dur-instant) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 
 .rail-item:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: var(--bg-surface);
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.rail-item:disabled {
+  opacity: 0.55;
 }
 
 .rail-item:focus-visible {
@@ -397,9 +546,28 @@ th {
   outline-offset: 2px;
 }
 
+/* Selected: a ring AND a check mark (via ::after), never colour alone. */
 .rail-on {
   border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-ring),
+    var(--shadow-md);
+}
+
+.rail-on::after {
+  content: '✓';
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  display: grid;
+  place-items: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--fg-on-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .rail-face {
@@ -413,55 +581,67 @@ th {
 .rail-face-none {
   display: grid;
   place-items: center;
-  font-size: 1.1rem;
+  font-size: 1.25rem;
+  font-weight: 650;
   color: var(--fg-muted);
+  background:
+    radial-gradient(80% 80% at 30% 20%, var(--accent-soft), transparent 70%), var(--bg-inset);
 }
 
 .rail-label {
-  font-weight: 550;
+  font-weight: 600;
   font-size: 0.9rem;
 }
 
 .rail-meta {
   font-size: 0.75rem;
+  color: var(--fg-muted);
 }
 
 /* Captions are larger than body text on purpose (docs/14 §3): they are the
    product, not a footnote. */
 .captions {
   margin: 0;
-  min-height: 3.2rem;
-  padding: 0.75rem 0.9rem;
+  min-height: 3.5rem;
+  padding: 0.9rem 1.1rem;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
-  border-radius: 9px;
-  font-size: 1.05rem;
-  line-height: 1.5;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
+  font-size: 1.125rem;
+  line-height: 1.6;
+  letter-spacing: -0.005em;
 }
 
 .captions-idle {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
+  color: var(--fg-muted);
 }
 
 .word {
   display: inline;
-  padding: 0 0.06em;
+  padding: 0.05em 0.12em;
   margin: 0;
   border: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   background: transparent;
   color: inherit;
   font: inherit;
   cursor: pointer;
+  transition: background-color var(--dur-instant) var(--ease-out);
 }
 
 .word:hover {
-  text-decoration: underline;
+  background: var(--bg-inset);
 }
 
 .word-on {
   background: var(--accent);
-  color: oklch(0.15 0.01 265);
+  color: var(--fg-on-accent);
+}
+
+.word-on:hover {
+  background: var(--accent-hover);
 }
 
 .word:focus-visible {
@@ -472,43 +652,62 @@ th {
 .player-controls {
   flex-wrap: wrap;
   gap: 1rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
 }
 
+/* A segmented control: one track, the selected segment raised out of it. */
 .seg {
   display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-inset);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
-  overflow: hidden;
 }
 
 .seg button {
-  border-radius: 0;
-  background: var(--bg-surface);
-  color: var(--fg-muted);
+  padding: 0.35rem 0.85rem;
+  border-radius: 6px;
+  color: var(--fg-secondary);
   font-size: 0.85rem;
-  padding: 0.4rem 0.8rem;
+  font-weight: 550;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.seg button:hover {
+  color: var(--fg-primary);
 }
 
 .seg .seg-on {
-  background: var(--accent);
-  color: oklch(0.15 0.01 265);
+  background: var(--bg-surface);
+  color: var(--fg-primary);
+  box-shadow: var(--shadow-sm);
 }
 
 .offset {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.6rem;
   margin: 0;
   font-size: 0.8rem;
-  color: var(--fg-muted);
+  font-weight: 500;
+  color: var(--fg-secondary);
 }
 
 .offset output {
   min-width: 4.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
 }
 
 .drift {
-  font-size: 0.78rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
 }
 
 /* Shown only on the HLS path, where a rendition switch really does silence
@@ -519,69 +718,15 @@ th {
   color: var(--warning);
 }
 
-.code-block {
-  margin: 0;
-  padding: 0.7rem 0.85rem;
-  background: var(--bg-inset);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
-  overflow-x: auto;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-
   .bar > span,
-  .rail-item {
+  .rail-item,
+  .word,
+  .seg button {
     transition: none;
   }
-}
 
-/* ------------------------------------------------------------- terminal --
-   Utilities the console uses that no token can express on its own. */
-
-/* The scanline wash, for the telemetry log only - the one place the hardware
-   metaphor is literal. Anywhere else it is just noise over text. */
-.scanlines {
-  position: relative;
-}
-
-.scanlines::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(0deg, var(--scanline) 0 1px, transparent 1px 3px);
-}
-
-.cursor-blink {
-  animation: blink 1.05s steps(2, start) infinite;
-}
-
-@keyframes blink {
-  to {
-    visibility: hidden;
-  }
-}
-
-.ticker {
-  animation: pulse 1s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.45;
-  }
-}
-
-/* Functionality is unchanged without motion; only the motion goes. */
-@media (prefers-reduced-motion: reduce) {
-  .cursor-blink,
-  .ticker {
-    animation: none;
+  .rail-item:hover:not(:disabled) {
+    transform: none;
   }
 }

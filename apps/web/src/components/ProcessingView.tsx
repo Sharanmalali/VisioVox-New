@@ -20,7 +20,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { Badge, Card, Progress, SpeakerDot } from '@/components/ui';
+import { IconCheck } from '@/components/icons';
+import { Badge, Progress, Slab, SpeakerDot, Spinner, cx } from '@/components/ui';
 import { formatDuration } from '@/lib/upload/resumable';
 
 /**
@@ -208,74 +209,97 @@ export function ProcessingView({
 
   if (event && TERMINAL.has(event.status)) return null;
 
+  const current = stage ? PIPELINE_ORDER.indexOf(stage) : -1;
+
   return (
-    <Card className="flex flex-col gap-5" glass>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg">{copy?.title ?? 'Getting started'}</h2>
-          <p className="mt-1 text-sm text-fg-secondary">
-            {copy?.detail ?? 'Your recording is queued and will begin shortly.'}
-          </p>
+    <Slab>
+      <div className="flex flex-col gap-6 p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3.5">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[var(--radius-md)] bg-accent-soft text-accent">
+              <Spinner size={18} />
+            </span>
+            <div>
+              <h2 className="text-[17px] font-semibold">{copy?.title ?? 'Getting started'}</h2>
+              <p className="mt-0.5 text-sm text-fg-secondary">
+                {copy?.detail ?? 'Your recording is queued and will begin shortly.'}
+              </p>
+            </div>
+          </div>
+          <Badge tone="accent" dot="pulse">
+            {event?.status === 'running' ? 'Processing' : (event?.status ?? 'Queued')}
+          </Badge>
         </div>
-        <Badge tone="accent">{event?.status ?? 'queued'}</Badge>
-      </div>
 
-      <div className="flex flex-col gap-2">
-        <Progress value={pct} label="Processing progress" />
-        <div className="flex items-center justify-between text-xs text-fg-muted">
-          <span className="tabular">{pct}% complete</span>
-          <span className="tabular">
-            {remaining
-              ? `about ${formatDuration(remaining[0])}–${formatDuration(remaining[1])} left`
-              : 'estimating…'}
-          </span>
+        <div className="flex flex-col gap-2">
+          <Progress value={pct} label="Processing progress" showValue={false} />
+          <div className="flex items-center justify-between font-mono text-[12px] text-fg-muted">
+            <span className="tabular">{pct}% complete</span>
+            <span className="tabular">
+              {remaining
+                ? `about ${formatDuration(remaining[0])}–${formatDuration(remaining[1])} left`
+                : 'estimating…'}
+            </span>
+          </div>
         </div>
-      </div>
 
-      {/* The stage list is the honest version of a progress bar: it shows what
-          has actually been finished rather than a number that only goes up. */}
-      <ol className="flex flex-col gap-1.5">
-        {Object.entries(STAGE_COPY).map(([id, entry]) => {
-          const order = Object.keys(STAGE_COPY);
-          const current = stage ? order.indexOf(stage) : -1;
-          const mine = order.indexOf(id);
-          const state =
-            current < 0
-              ? 'pending'
-              : mine < current
-                ? 'done'
-                : mine === current
-                  ? 'active'
-                  : 'pending';
-          return (
-            <li
-              key={id}
-              className={[
-                'flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2 py-1.5 text-sm',
-                state === 'active' ? 'bg-bg-elevated text-fg-primary' : '',
-                state === 'done' ? 'text-fg-muted' : '',
-                state === 'pending' ? 'text-fg-muted opacity-60' : '',
-              ].join(' ')}
-            >
-              <span aria-hidden className="w-4 shrink-0 text-center">
-                {state === 'done' ? '✓' : state === 'active' ? '•' : '·'}
-              </span>
-              <span>{entry.title}</span>
-              {state === 'active' && speakerCount != null && id === 'S5_extract' && (
-                <span className="ml-auto flex items-center gap-1">
-                  {Array.from({ length: Math.min(speakerCount, 4) }, (_, i) => (
-                    <SpeakerDot key={i} index={i} size={7} />
-                  ))}
+        {/* The stage list is the honest version of a progress bar: it shows what
+            has actually been finished rather than a number that only goes up.
+            Only the stages the deployed pipeline runs, in the order it runs them. */}
+        <ol className="grid gap-2 sm:grid-cols-5">
+          {PIPELINE_ORDER.map((id, mine) => {
+            const entry = STAGE_COPY[id];
+            const state =
+              current < 0
+                ? 'pending'
+                : mine < current
+                  ? 'done'
+                  : mine === current
+                    ? 'active'
+                    : 'pending';
+            return (
+              <li
+                key={id}
+                className={cx(
+                  'flex items-center gap-2 rounded-[var(--radius-sm)] border px-3 py-2 text-[13px]',
+                  state === 'active' && 'border-accent bg-accent-soft font-medium text-fg-primary',
+                  state === 'done' && 'border-border-subtle bg-bg-surface text-fg-secondary',
+                  state === 'pending' && 'border-border-subtle bg-bg-subtle text-fg-muted',
+                )}
+              >
+                <span aria-hidden className="shrink-0">
+                  {state === 'done' ? (
+                    <IconCheck size={14} className="text-success" />
+                  ) : state === 'active' ? (
+                    <span className="block h-2 w-2 rounded-full bg-accent ticker" />
+                  ) : (
+                    <span className="block h-2 w-2 rounded-full bg-border-default" />
+                  )}
                 </span>
-              )}
-            </li>
-          );
-        })}
-      </ol>
+                <span className="truncate">{entry?.title ?? id}</span>
+                <span className="sr-only">
+                  {state === 'done' ? 'complete' : state === 'active' ? 'in progress' : 'waiting'}
+                </span>
+                {state === 'active' && speakerCount != null && id === 'S5_extract' && (
+                  <span className="ml-auto flex items-center gap-1">
+                    {Array.from({ length: Math.min(speakerCount, 4) }, (_, i) => (
+                      <SpeakerDot key={i} index={i + 1} size={7} />
+                    ))}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
 
-      <p className="text-xs text-fg-muted">
-        You can close this tab. Processing continues, and the page picks up where it left off.
-      </p>
-    </Card>
+        <p className="text-[13px] text-fg-muted">
+          You can close this tab. Processing continues, and the page picks up where it left off.
+        </p>
+      </div>
+    </Slab>
   );
 }
+
+/** The stages the deployed pipeline runs, in the order it runs them
+ *  (services/worker-gpu real_pipeline: S0 -> S5 -> S3 -> S7 -> S9). */
+const PIPELINE_ORDER = ['S0_ingest', 'S5_extract', 'S3_fuse', 'S7_transcribe', 'S9_package'];

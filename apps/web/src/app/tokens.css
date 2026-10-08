@@ -1,157 +1,188 @@
-/* Design tokens — the terminal.
+/* Design tokens.
  *
- * One visual world: a dark hardware console. There is no light theme, and that
- * is a decision rather than an omission — a light neo-brutalist terminal is a
- * different product, so every colour here is painted explicitly and nothing
- * follows the viewer's system preference.
+ * Two themes, one vocabulary. Light is the default; dark is chosen by the
+ * viewer's system or by the toggle, and is applied as `data-theme="dark"` on
+ * <html> before first paint (see the bootstrap script in layout.tsx), so
+ * neither theme ever flashes the other.
  *
- * `scripts/check-contrast.mjs` parses this file in CI, which is why the values
- * live here as plain custom properties and not inside a JS object.
+ * `scripts/check-contrast.mjs` parses this file in CI and checks every
+ * foreground/background pairing the interface renders, in BOTH themes, which
+ * is why the values live here as plain custom properties and not in JS.
  *
- * DEPTH IS NOT CONTRAST. The edges in this design are pure black on a near
- * black ground, and they are meant to be: an element reads as extruded because
- * of the hard unblurred offset beneath it, not because its border is legible.
- * So --edge is deliberately absent from the contrast pairs, while
- * --border-strong stays a genuinely visible line for the cases that need one.
+ * The palette is deliberately quiet: a neutral scale carries the interface,
+ * one indigo accent marks what is interactive or current, and colour is spent
+ * where it carries meaning - the four speaker hues and the states.
  */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* ---- the console ---------------------------------------------------
-   * Named for what they are physically, because that is how the interface
-   * is reasoned about: a void the rack is mounted on, panels bolted to it,
-   * raised faces on the panels, and the black edge between everything.
-   */
-  --void: #0b0f19;
-  --panel: #151b2b;
-  --raised: #1c2438;
-  --edge: #000000;
-  --acid: #00ff66;
-  --acid-hot: #3dff8a;
-  --crimson: #ff3366;
-  --crimson-hot: #ff5c85;
-  --chalk: #e8ecf5;
-  --dust: #7a88a6;
+  /* ---- surfaces ------------------------------------------------------- */
+  --bg-base: #ffffff;
+  --bg-subtle: #f7f7f9;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-inset: #f2f3f6;
+  --bg-overlay: rgba(10, 12, 18, 0.45);
 
-  /* ---- semantic aliases ----------------------------------------------
-   * The same palette under the names the components and the contrast gate
-   * already use, so one file defines the colours and nothing can drift.
-   */
-  --bg-base: var(--void);
-  --bg-surface: var(--panel);
-  --bg-elevated: var(--raised);
-  --bg-inset: #05070d;
+  --border-subtle: #e5e7eb;
+  --border-default: #d9dce3;
+  --border-strong: #868b96;
 
-  /* Subtle is the hairline inside a panel; strong is a line meant to be
-   * seen. The black extrusion edge is --edge and is not a border token. */
-  --border-subtle: #28334d;
-  --border-strong: var(--dust);
+  /* ---- text ------------------------------------------------------------ */
+  --fg-primary: #0b0d12;
+  --fg-secondary: #4a5060;
+  --fg-muted: #636a78;
+  --fg-on-accent: #ffffff;
 
-  --fg-primary: var(--chalk);
-  --fg-secondary: #9aa6c0;
-  --fg-muted: var(--dust);
+  /* ---- action ----------------------------------------------------------
+   * Primary actions are ink on paper (and paper on ink in dark): the calmest
+   * strong signal there is. The accent is for focus, links, progress and
+   * the current item - never for decoration. */
+  --primary: #0b0d12;
+  --primary-hover: #2a2e38;
+  --primary-fg: #ffffff;
 
-  /* ---- speakers ------------------------------------------------------
-   * Carried over unchanged. Equal L (~0.72) so no speaker reads as more
-   * important than another, verified against the three common colour-vision
-   * deficiencies, and colour is never the sole identifier (NFR-A11Y-06).
-   * Re-picking these to suit a new palette would throw that work away.
-   */
-  --spk-1: oklch(0.72 0.17 235); /* azure   */
-  --spk-2: oklch(0.74 0.17 145); /* jade    */
-  --spk-3: oklch(0.76 0.16 75); /* amber   */
-  --spk-4: oklch(0.7 0.18 330); /* magenta */
-  --spk-mixed: oklch(0.62 0.02 265); /* deliberately desaturated */
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef0ff;
+  --accent-ring: rgba(79, 70, 229, 0.35);
 
-  /* ---- semantic state ------------------------------------------------- */
-  --accent: var(--acid);
-  --accent-hover: var(--acid-hot);
-  --success: var(--acid);
-  --warning: #ffb627;
-  --danger: var(--crimson);
+  /* ---- states ---------------------------------------------------------- */
+  --success: #15803d;
+  --success-soft: #ecfdf3;
+  --warning: #b45309;
+  --warning-soft: #fffbeb;
+  --danger: #b91c1c;
+  --danger-soft: #fef2f2;
 
-  --confidence-high: var(--acid);
+  --confidence-high: var(--success);
   --confidence-medium: var(--warning);
-  --confidence-low: #ff8a3d;
-  --contested: #c07bff;
+  --confidence-low: #c2410c;
+  --contested: #7c3aed;
 
-  /* ---- geometry -------------------------------------------------------
-   * Square. A radius would round off the extrusion and the whole depth
-   * illusion goes with it, so the scale exists only because components
-   * reference it.
-   */
-  --radius-sm: 0px;
-  --radius-md: 0px;
-  --radius-lg: 0px;
-  --radius-full: 0px;
+  /* ---- speakers --------------------------------------------------------
+   * Equal lightness so no speaker reads as more important than another,
+   * distinct in hue for the common colour-vision deficiencies, and never the
+   * sole identifier (NFR-A11Y-06): every speaker also has a number and a name.
+   * Darker here than in the dark theme so each clears 3:1 on white and on the
+   * timeline bed. */
+  --spk-1: oklch(0.55 0.16 245); /* azure   */
+  --spk-2: oklch(0.55 0.15 150); /* jade    */
+  --spk-3: oklch(0.58 0.15 60); /* amber   */
+  --spk-4: oklch(0.55 0.2 335); /* magenta */
+  --spk-mixed: oklch(0.55 0.02 265);
 
-  /* ---- depth ----------------------------------------------------------
-   * Hard offsets, zero blur. Blur would make these shadows; their flatness
-   * is what makes them extrusions. An element that can be pressed travels
-   * exactly its own offset, so it lands flush with the surface.
-   */
-  --lift-sm: 4px;
-  --lift-md: 7px;
-  --lift-lg: 12px;
+  /* ---- brand ----------------------------------------------------------- */
+  --brand-1: #4f46e5;
+  --brand-2: #7c3aed;
+  --brand-3: #0ea5e9;
 
-  --depth-sm: 4px 4px 0 0 var(--edge);
-  --depth-md: 7px 7px 0 0 var(--edge);
-  --depth-lg: 12px 12px 0 0 var(--edge);
-  --depth-none: 0 0 0 0 var(--edge);
+  /* ---- geometry -------------------------------------------------------- */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
 
-  /* Inputs are the inverse: recessed, so the eye reads them as somewhere to
-   * put something in rather than something to press. */
-  --depth-inset: inset 5px 5px 0 0 rgba(0, 0, 0, 0.85);
+  /* ---- depth -----------------------------------------------------------
+   * Layered, soft and low: a key light from above and a contact shadow. */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.07), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 6px 16px -4px rgba(16, 24, 40, 0.08), 0 2px 4px -2px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 18px 40px -12px rgba(16, 24, 40, 0.16), 0 4px 10px -4px rgba(16, 24, 40, 0.05);
+  --shadow-xl: 0 32px 80px -24px rgba(16, 24, 40, 0.28), 0 8px 24px -12px rgba(16, 24, 40, 0.08);
 
-  --shadow-sm: var(--depth-sm);
-  --shadow-md: var(--depth-md);
-  --shadow-lg: var(--depth-lg);
-
-  --stroke: 4px;
-
-  /* ---- motion ---------------------------------------------------------
-   * A key press is 75ms because it should feel mechanical rather than
-   * animated. --dur-instant stays at the 80ms audio crossfade in docs/12
-   * §3.3, so a speaker switch still reads as one event rather than two.
-   */
-  --dur-press: 75ms;
+  /* ---- motion ----------------------------------------------------------
+   * --dur-instant stays at the 80 ms audio crossfade (docs/12 §3.3), so a
+   * speaker switch still reads as one event rather than two. */
   --dur-instant: 80ms;
-  --dur-fast: 160ms;
-  --dur-normal: 260ms;
+  --dur-fast: 150ms;
+  --dur-normal: 240ms;
   --dur-slow: 420ms;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
-  --ease-spring: linear(0, 0.4 12%, 0.85 24%, 1.05 38%, 0.99 60%, 1);
 
-  /* ---- type -----------------------------------------------------------
-   * Set by next/font in layout.tsx, which self-hosts both faces; the
-   * fallbacks matter because a monospace stack that silently resolves to a
-   * proportional face would break every aligned column in the telemetry.
-   */
-  --font-sans: var(--font-mono-face), ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* ---- type ------------------------------------------------------------ */
+  --font-sans:
+    var(--font-sans-face), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: var(--font-mono-face), ui-monospace, SFMono-Regular, Menlo, monospace;
-  --font-display: var(--font-display-face), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sans);
 
-  /* ---- expressive surfaces only ---------------------------------------
-   * Landing, auth, upload, waiting. Never inside the player: there the user
-   * is judging audio quality and decoration competes with the signal.
-   */
-  --glow-accent: 0 0 0 0 transparent; /* no glow in this world; depth carries it */
-  --glow-speaker: 0 0 0 2px var(--speaker-color);
+  /* ---- decoration (marketing surfaces only, never the player) ----------- */
+  --grid-line: rgba(15, 23, 42, 0.055);
+  --glow-1: rgba(99, 102, 241, 0.18);
+  --glow-2: rgba(14, 165, 233, 0.14);
+}
 
-  --grid-line: rgba(122, 136, 166, 0.07);
-  --grid-size: 34px;
-  --scanline: rgba(0, 255, 102, 0.05);
+/* Applied before first paint by the bootstrap script in layout.tsx. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-base: #0a0b10;
+  --bg-subtle: #0e1016;
+  --bg-surface: #12141b;
+  --bg-elevated: #181b24;
+  --bg-inset: #0c0e14;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+
+  --border-subtle: #22252f;
+  --border-default: #2d313d;
+  --border-strong: #707684;
+
+  --fg-primary: #f3f4f7;
+  --fg-secondary: #b3b8c4;
+  --fg-muted: #8c92a0;
+  --fg-on-accent: #0a0b10;
+
+  --primary: #f3f4f7;
+  --primary-hover: #d9dce3;
+  --primary-fg: #0a0b10;
+
+  --accent: #8b93ff;
+  --accent-hover: #a5acff;
+  --accent-soft: #1b1d38;
+  --accent-ring: rgba(139, 147, 255, 0.4);
+
+  --success: #4ade80;
+  --success-soft: #0f2a1b;
+  --warning: #fbbf24;
+  --warning-soft: #2b2110;
+  --danger: #f87171;
+  --danger-soft: #2d1416;
+
+  --confidence-high: var(--success);
+  --confidence-medium: var(--warning);
+  --confidence-low: #fb923c;
+  --contested: #c4a1ff;
+
+  --spk-1: oklch(0.72 0.17 235);
+  --spk-2: oklch(0.74 0.17 145);
+  --spk-3: oklch(0.76 0.16 75);
+  --spk-4: oklch(0.7 0.18 330);
+  --spk-mixed: oklch(0.62 0.02 265);
+
+  --brand-1: #818cf8;
+  --brand-2: #a78bfa;
+  --brand-3: #38bdf8;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.02);
+  --shadow-md: 0 8px 20px -6px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-lg: 0 20px 48px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  --shadow-xl: 0 32px 90px -20px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255, 255, 255, 0.04);
+
+  --grid-line: rgba(255, 255, 255, 0.045);
+  --glow-1: rgba(129, 140, 248, 0.22);
+  --glow-2: rgba(56, 189, 248, 0.12);
 }
 
 /* Functionality is unchanged under reduced motion; only the motion goes
- * (NFR-A11Y-04, FR-SITE-06). The press travel is kept — it is feedback for a
- * physical action, not decoration — but it happens instantly. */
+ * (NFR-A11Y-04, FR-SITE-06). */
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --dur-press: 0ms;
     --dur-instant: 0ms;
     --dur-fast: 0ms;
     --dur-normal: 0ms;

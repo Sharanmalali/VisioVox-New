@@ -12,9 +12,7 @@
  * first and carry their own-script names.
  */
 
-import { useId } from 'react';
-
-import { cx } from '@/components/ui';
+import { Select } from '@/components/ui';
 import type { LanguageOption } from '@visiovox/ts-client';
 
 /** Scheduled languages of India the recognizer does not cover; named so nobody hunts for them. */
@@ -32,8 +30,6 @@ export interface LanguageSelectProps {
 }
 
 export function LanguageSelect({ languages, value, onChange, disabled }: LanguageSelectProps) {
-  const id = useId();
-  const noteId = `${id}-note`;
   const list = languages ?? [];
   const english = list.filter((l) => l.code === 'en');
   const india = list.filter((l) => l.group === 'india');
@@ -41,21 +37,14 @@ export function LanguageSelect({ languages, value, onChange, disabled }: Languag
 
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor={id} className="etch">
-        Spoken language
-      </label>
-      <select
-        id={id}
+      <Select
+        label="Spoken language"
         value={value ?? ''}
         disabled={disabled === true || list.length === 0}
-        aria-describedby={noteId}
+        hint={`For captions only — separation works in any language. Choose it when accents may confuse detection. Not yet available: ${NOT_COVERED}.`}
         onChange={(e) => {
           onChange(e.target.value === '' ? null : e.target.value);
         }}
-        className={cx(
-          'w-full border-4 border-edge bg-void px-4 py-3 text-sm text-chalk',
-          'shadow-[var(--depth-inset)] focus:border-acid disabled:opacity-60',
-        )}
       >
         <option value="">Detect automatically</option>
         {english.map((l) => (
@@ -81,12 +70,7 @@ export function LanguageSelect({ languages, value, onChange, disabled }: Languag
             ))}
           </optgroup>
         )}
-      </select>
-      <span id={noteId} className="font-mono text-[11px] text-dust">
-        Used for captions only; separation works in any language. Choose it when speakers have an
-        accent that detection may misread. Captions cannot yet be made in {NOT_COVERED}: speech in
-        those comes out in the closest language the recognizer knows.
-      </span>
+      </Select>
     </div>
   );
 }

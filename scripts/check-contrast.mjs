@@ -152,11 +152,20 @@ const PAIRS = [
   ['fg-primary', 'bg-elevated', AA_TEXT, 'body text in a popover'],
   ['fg-secondary', 'bg-base', AA_TEXT, 'secondary text on the page'],
   ['fg-secondary', 'bg-surface', AA_TEXT, 'secondary text on a card'],
-  ['fg-muted', 'bg-base', AA_LARGE, 'muted text on the page'],
-  ['fg-muted', 'bg-surface', AA_LARGE, 'muted text on a card'],
+  ['fg-primary', 'bg-subtle', AA_TEXT, 'body text on a tinted section'],
+  ['fg-secondary', 'bg-subtle', AA_TEXT, 'secondary text on a tinted section'],
+  // Muted text is used at caption sizes (12-13 px), so it is held to the body
+  // threshold, not the large-text one.
+  ['fg-muted', 'bg-base', AA_TEXT, 'muted text on the page'],
+  ['fg-muted', 'bg-surface', AA_TEXT, 'muted text on a card'],
+  ['fg-muted', 'bg-subtle', AA_TEXT, 'muted text on a tinted section'],
+  ['fg-secondary', 'bg-inset', AA_TEXT, 'secondary text in an input'],
 
-  ['accent', 'bg-base', AA_LARGE, 'accent on the page'],
-  ['accent', 'bg-surface', AA_LARGE, 'accent on a card'],
+  ['primary-fg', 'primary', AA_TEXT, 'label on a primary button'],
+  ['fg-on-accent', 'accent', AA_TEXT, 'label on an accent fill'],
+  ['accent', 'bg-base', AA_TEXT, 'link / accent on the page'],
+  ['accent', 'bg-surface', AA_TEXT, 'link / accent on a card'],
+  ['accent', 'accent-soft', AA_TEXT, 'accent text on its tint'],
   ['success', 'bg-surface', AA_LARGE, 'success state'],
   ['warning', 'bg-surface', AA_LARGE, 'warning / low confidence'],
   ['danger', 'bg-surface', AA_LARGE, 'error state'],
@@ -174,21 +183,30 @@ const PAIRS = [
   ['spk-3', 'bg-inset', AA_LARGE, 'speaker 3 on the timeline bed'],
   ['spk-4', 'bg-inset', AA_LARGE, 'speaker 4 on the timeline bed'],
 
+  ['success', 'success-soft', AA_TEXT, 'success text on its tint'],
+  ['warning', 'warning-soft', AA_TEXT, 'warning text on its tint'],
+  ['danger', 'danger-soft', AA_TEXT, 'error text on its tint'],
+
+  // Input outlines and focusable boundaries (WCAG 1.4.11).
   ['border-strong', 'bg-base', AA_LARGE, 'strong border'],
-  // --edge is NOT checked, deliberately. The black extrusion edge is meant to
-  // be invisible against the void; depth is carried by the hard offset under
-  // an element, not by a legible outline. Requiring contrast there would
-  // require deleting the design.
+  ['border-strong', 'bg-surface', AA_LARGE, 'strong border on a card'],
+  // --border-subtle is NOT checked, deliberately: it separates regions that
+  // are already separated by spacing, and never bounds a control on its own.
 ];
 
 // ------------------------------------------------------------------ run --
 
 const css = readFileSync(TOKENS, 'utf8');
 
-// One theme. The interface commits to a single dark console; a light
-// neo-brutalist terminal would be a different product, so there is no
-// [data-theme='light'] block to check.
-const themes = [['dark', parseBlock(blockFor(css, ':root {'))]];
+// Both themes. The dark block only overrides colours, so it is checked as the
+// light block with the dark values laid over it - exactly what the browser
+// computes when `data-theme="dark"` is set on <html>.
+const light = parseBlock(blockFor(css, ':root {'));
+const dark = new Map([...light, ...parseBlock(blockFor(css, ":root[data-theme='dark'] {"))]);
+const themes = [
+  ['light', light],
+  ['dark', dark],
+];
 
 let failures = 0;
 let checked = 0;

@@ -11,8 +11,13 @@
  */
 
 import type { Metadata } from 'next';
+import Link from 'next/link';
+import type { ReactNode } from 'react';
 
+import { IconLink, IconShare, Logo, LogoMark } from '@/components/icons';
 import { SharePlayer } from '@/components/SharePlayer';
+import { ThemeToggle } from '@/components/shell/ThemeToggle';
+import { ButtonLink } from '@/components/ui';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
@@ -75,55 +80,97 @@ export async function generateMetadata({
   };
 }
 
+function ShareChrome({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-h-dvh flex-col bg-bg-subtle">
+      <header className="glass sticky top-0 z-40 border-b border-border-subtle">
+        <div className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
+          <Link href="/" aria-label="VisioVox home" className="rounded-[var(--radius-sm)]">
+            <Logo size={26} />
+          </Link>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <ButtonLink href="/" size="sm">
+              Try VisioVox
+            </ButtonLink>
+          </div>
+        </div>
+      </header>
+      <main id="content" className="flex-1">
+        {children}
+      </main>
+    </div>
+  );
+}
+
 export default async function SharePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const data = await load(token);
 
   if (!data) {
     return (
-      <div className="mx-auto flex max-w-lg flex-col gap-3 py-16 text-center">
-        <h1 className="font-display text-3xl">This link is not available</h1>
-        <p className="text-fg-secondary">
-          It may have been revoked by whoever shared it, or it may have expired. Links are not
-          recoverable once revoked.
-        </p>
-        <p className="text-sm text-fg-muted">
-          <a href="/" className="text-accent">
+      <ShareChrome>
+        <div className="mx-auto flex max-w-md flex-col items-center gap-4 px-6 py-24 text-center">
+          <span className="grid h-14 w-14 place-items-center rounded-[var(--radius-md)] border border-border-subtle bg-bg-surface text-fg-secondary shadow-sm">
+            <IconLink size={24} />
+          </span>
+          <h1 className="text-2xl font-semibold tracking-[-0.02em]">This link is not available</h1>
+          <p className="text-[15px] leading-relaxed text-fg-secondary">
+            It may have been revoked by whoever shared it, or it may have expired. Links cannot be
+            recovered once revoked — ask the sender for a new one.
+          </p>
+          <ButtonLink href="/" variant="secondary" className="mt-2">
             What is VisioVox?
-          </a>
-        </p>
-      </div>
+          </ButtonLink>
+        </div>
+      </ShareChrome>
     );
   }
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-5 py-6">
-      <header className="flex flex-col gap-1">
-        <p className="text-sm text-fg-muted">Shared with you</p>
-        <h1 className="font-display text-3xl">{data.title}</h1>
-        <p className="text-sm text-fg-secondary">
-          {data.speaker_ordinal !== null
-            ? `Speaker ${String(data.speaker_ordinal)}, isolated from the other voices`
-            : `${String(data.speaker_count)} speakers, each separated onto their own track`}
-          {data.duration_ms ? ` · ${minutes(data.duration_ms)}` : ''}
-        </p>
-      </header>
+    <ShareChrome>
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10">
+        <div className="flex flex-col gap-2">
+          <span className="inline-flex w-fit items-center gap-1.5 rounded-full border border-border-default bg-bg-surface px-2.5 py-0.5 text-[12px] font-medium text-fg-secondary">
+            <IconShare size={12} />
+            Shared with you
+          </span>
+          <h1 className="text-[28px] font-semibold tracking-[-0.025em] sm:text-[34px]">
+            {data.title}
+          </h1>
+          <p className="text-[15px] text-fg-secondary">
+            {data.speaker_ordinal !== null
+              ? `Speaker ${String(data.speaker_ordinal)}, isolated from the other voices`
+              : `${String(data.speaker_count)} speakers, each separated onto their own track`}
+            {data.duration_ms ? ` · ${minutes(data.duration_ms)}` : ''}
+          </p>
+        </div>
 
-      <SharePlayer manifest={data.manifest} />
+        <div className="rounded-[var(--radius-lg)] border border-border-subtle bg-bg-surface p-4 shadow-sm sm:p-6">
+          <SharePlayer manifest={data.manifest} />
+        </div>
 
-      <footer className="flex flex-col gap-2 border-t border-border-subtle pt-4 text-sm text-fg-muted">
-        <p>
-          Separated with{' '}
-          <a href="/" className="text-accent">
-            VisioVox
-          </a>{' '}
-          — upload a recording where people talk over each other, and hear one of them at a time.
-        </p>
-        <p className="text-xs">
+        <div className="flex flex-col items-start justify-between gap-4 rounded-[var(--radius-lg)] border border-border-subtle bg-bg-surface p-5 shadow-sm sm:flex-row sm:items-center">
+          <div className="flex items-start gap-3">
+            <LogoMark size={36} />
+            <div>
+              <p className="text-[15px] font-semibold">Separated with VisioVox</p>
+              <p className="text-sm text-fg-muted">
+                Upload a recording where people talk over each other, and hear one of them at a
+                time.
+              </p>
+            </div>
+          </div>
+          <ButtonLink href="/login" className="shrink-0">
+            Try it free
+          </ButtonLink>
+        </div>
+
+        <p className="text-[12.5px] leading-relaxed text-fg-muted">
           Whoever shared this can revoke the link at any time. Voiceprints and face crops from the
           original recording were deleted when it finished processing.
         </p>
-      </footer>
-    </div>
+      </div>
+    </ShareChrome>
   );
 }
