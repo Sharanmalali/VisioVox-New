@@ -19,6 +19,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Settings, get_settings
@@ -42,6 +43,36 @@ def _bearer(request: Request) -> str:
     return token
 
 
+async def _create_user(session: AsyncSession, identity: FirebaseIdentity) -> User:
+    """Insert the row for a new identity, tolerating a concurrent first request.
+
+    A browser's first page after sign-up fires several API calls at once, and
+    each one reaches here having found no row. Without a guard all but one
+    fail on the unique email / uid constraint and answer 500 - seen in
+    production on a new account's first upload page. The insert runs in a
+    savepoint, and on a conflict the row the other request created is read
+    back instead.
+    """
+    user = User(
+        firebase_uid=identity.uid,
+        email=identity.email or f"{identity.uid}@firebase.local",
+        display_name=identity.display_name,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(user)
+            await session.flush()
+    except IntegrityError:
+        existing = await session.scalar(select(User).where(User.firebase_uid == identity.uid))
+        if existing is None and identity.email:
+            existing = await session.scalar(select(User).where(User.email == identity.email))
+        if existing is None:
+            raise
+        existing.firebase_uid = identity.uid
+        return existing
+    return user
+
+
 async def sync_user(session: AsyncSession, identity: FirebaseIdentity) -> User:
     """Find or create the local row for a verified Firebase identity.
 
@@ -63,12 +94,7 @@ async def sync_user(session: AsyncSession, identity: FirebaseIdentity) -> User:
         if user is not None:
             user.firebase_uid = identity.uid
         else:
-            user = User(
-                firebase_uid=identity.uid,
-                email=identity.email or f"{identity.uid}@firebase.local",
-                display_name=identity.display_name,
-            )
-            session.add(user)
+            user = await _create_user(session, identity)
 
     if identity.email and user.email != identity.email:
         user.email = identity.email

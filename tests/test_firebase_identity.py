@@ -130,6 +130,27 @@ async def test_a_verified_token_creates_the_local_row(client: AsyncClient, as_us
     await engine.dispose()
 
 
+async def test_a_new_users_first_requests_can_race(client: AsyncClient, as_user: SignIn) -> None:
+    """The first page after sign-up fires several calls at once; every one must
+    succeed and exactly one row must result (was: 500 on all but the first)."""
+    import asyncio
+
+    uid = f"uid-{uuid.uuid4().hex[:12]}"
+    email = f"{uid}@example.com"
+    headers = as_user(_identity(uid, email))
+
+    responses = await asyncio.gather(
+        *(client.get(path, headers=headers) for path in ["/v1/auth/me", "/v1/limits"] * 4)
+    )
+    assert [r.status_code for r in responses] == [200] * 8
+
+    engine = create_async_engine(DB_URL)
+    async with async_sessionmaker(engine)() as session:
+        rows = (await session.scalars(select(User).where(User.firebase_uid == uid))).all()
+        assert len(rows) == 1
+    await engine.dispose()
+
+
 async def test_signing_in_twice_does_not_duplicate_the_row(
     client: AsyncClient, as_user: SignIn
 ) -> None:
