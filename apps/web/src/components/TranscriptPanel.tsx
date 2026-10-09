@@ -25,6 +25,7 @@ import {
   IconDownload,
   IconFileText,
   IconPencil,
+  IconScissors,
   IconSearch,
   IconX,
 } from '@/components/icons';
@@ -68,6 +69,8 @@ export interface TranscriptPanelProps {
   readonly headerExtra?: React.ReactNode;
   /** A note above the lines (e.g. "Translating into Hindi"). */
   readonly notice?: React.ReactNode;
+  /** Present when lines can be clipped for download (the owner's page). */
+  readonly onClip?: ((line: TranscriptLine) => void) | undefined;
 }
 
 function download(name: string, body: BlobPart, type: string): void {
@@ -91,6 +94,7 @@ export function TranscriptPanel({
   translated,
   headerExtra,
   notice,
+  onClip,
 }: TranscriptPanelProps) {
   const { lines: originalLines, captionsReady, mediaMs, speakers, nameOf, playLine } = context;
   // Translated lines keep their timing and drop word timings (word order
@@ -258,10 +262,11 @@ export function TranscriptPanel({
           current={i === currentHit}
           original={isTranslated ? originalLines[i]?.text : undefined}
           onPlay={playLine}
+          onClip={onClip}
         />
       )),
     // `signature` stands in for the per-frame values it encodes.
-    [visible, nameOf, signature, query, currentHit, playLine, isTranslated, originalLines],
+    [visible, nameOf, signature, query, currentHit, playLine, isTranslated, originalLines, onClip],
   );
 
   const toggleSpeaker = (ordinal: number) => {
@@ -422,6 +427,7 @@ interface LineProps {
   readonly current: boolean;
   /** The words as spoken, when the line is shown translated. */
   readonly original?: string | undefined;
+  readonly onClip?: ((line: TranscriptLine) => void) | undefined;
   readonly onPlay: (line: TranscriptLine) => void;
 }
 
@@ -435,6 +441,7 @@ const Line = memo(function Line({
   current,
   original,
   onPlay,
+  onClip,
 }: LineProps) {
   const slot = ((line.ordinal - 1) % 4) + 1;
   let body: React.ReactNode;
@@ -462,7 +469,7 @@ const Line = memo(function Line({
   }
 
   return (
-    <li data-line={index}>
+    <li data-line={index} className="group relative">
       <button
         type="button"
         className={cx('tline', active && 'tline-on')}
@@ -482,6 +489,19 @@ const Line = memo(function Line({
           <span className="tline-original">{original}</span>
         )}
       </button>
+      {onClip !== undefined && (
+        <button
+          type="button"
+          onClick={() => {
+            onClip(line);
+          }}
+          aria-label={`Clip ${name} at ${readableTime(line.start_ms)} for download`}
+          title="Clip this line for download (again on a later line to stretch the clip)"
+          className="absolute right-2 top-1.5 grid size-7 place-items-center rounded-[var(--radius-sm)] bg-bg-surface text-fg-muted opacity-0 shadow-xs transition-opacity hover:text-accent focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <IconScissors size={14} />
+        </button>
+      )}
     </li>
   );
 });

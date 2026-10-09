@@ -219,6 +219,11 @@ class CreateExportRequest(StrictModel):
     speaker_ordinal: int | None = Field(default=None, ge=1, le=8)
     # Checked against what the source can honestly produce, never trusted.
     quality: str | None = None
+    # A clip: both or neither, in milliseconds from the start.
+    start_ms: int | None = Field(default=None, ge=0)
+    end_ms: int | None = Field(default=None, ge=1)
+    # Burned-in captions: "original", or the code of a ready translation.
+    captions: str | None = Field(default=None, max_length=16)
 
 
 class ExportResponse(BaseModel):
@@ -227,6 +232,9 @@ class ExportResponse(BaseModel):
     speaker_ordinal: int | None
     kind: str
     quality: str | None
+    start_ms: int | None = None
+    end_ms: int | None = None
+    captions: str | None = None
     status: str
     size_bytes: int | None
     expires_at: dt.datetime | None
@@ -344,3 +352,19 @@ class TranslationResponse(BaseModel):
 class TranslationListResponse(BaseModel):
     items: list[TranslationResponse]
     languages: list[TranslationLanguageOption]
+
+
+class SummaryResponse(BaseModel):
+    # "none" until one is asked for.
+    status: str
+    # ml/pipeline/s11_summarize.py's output once "ready".
+    content: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: dt.datetime | None = None
+
+
+class ExportLinkResponse(BaseModel):
+    """A short-lived, signed URL the browser can navigate to directly."""
+
+    url: str
+    filename: str

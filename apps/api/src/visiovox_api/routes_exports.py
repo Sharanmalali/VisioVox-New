@@ -25,11 +25,12 @@ from sqlalchemy import select
 
 from . import audit, problems, quotas
 from .deps import CurrentUser, OwnedProject, SessionDep, SettingsDep
-from .models import Export
+from .models import Export, Translation
 from .ratelimit import RULES, RateLimiter, client_ip, enforce
 from .redis_client import get_redis
 from .schemas import (
     CreateExportRequest,
+    ExportLinkResponse,
     ExportListResponse,
     ExportResponse,
     RenditionOption,
@@ -50,6 +51,9 @@ def _response(row: Export) -> ExportResponse:
         speaker_ordinal=row.speaker_ordinal,
         kind=row.kind,
         quality=row.quality,
+        start_ms=row.start_ms,
+        end_ms=row.end_ms,
+        captions=row.captions,
         status=row.status,
         size_bytes=row.size_bytes,
         expires_at=row.expires_at,
@@ -113,13 +117,19 @@ async def create_export(
                 ),
             )
 
+    _check_clip(body.start_ms, body.end_ms, project.duration_ms)
+    await _check_captions(body.captions, body.kind, project.id, session)
+
     # Asking twice returns the same artifact rather than re-encoding it.
     existing = await session.scalar(
         select(Export).where(
             Export.project_id == project.id,
-            Export.speaker_ordinal == body.speaker_ordinal,
+            Export.speaker_ordinal.is_not_distinct_from(body.speaker_ordinal),
             Export.kind == body.kind,
-            Export.quality == body.quality,
+            Export.quality.is_not_distinct_from(body.quality),
+            Export.start_ms.is_not_distinct_from(body.start_ms),
+            Export.end_ms.is_not_distinct_from(body.end_ms),
+            Export.captions.is_not_distinct_from(body.captions),
         )
     )
     if existing is not None and existing.status in {"queued", "running", "ready"}:
@@ -131,6 +141,9 @@ async def create_export(
         speaker_ordinal=body.speaker_ordinal,
         kind=body.kind,
         quality=body.quality,
+        start_ms=body.start_ms,
+        end_ms=body.end_ms,
+        captions=body.captions,
     )
     row.status = "queued"
     row.error_detail = None
@@ -152,6 +165,71 @@ async def create_export(
 
     _enqueue_export(row.id)
     return _response(row)
+
+
+MIN_CLIP_MS = 500
+
+
+def _check_clip(start_ms: int | None, end_ms: int | None, duration_ms: int | None) -> None:
+    """A clip is both ends, in order, inside the recording, and long enough."""
+    if start_ms is None and end_ms is None:
+        return
+    if start_ms is None or end_ms is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="A clip needs a start and an end."
+        )
+    if end_ms - start_ms < MIN_CLIP_MS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A clip must be at least half a second long.",
+        )
+    # A second of slack: the stored length is rounded, and a clip ending at
+    # "the end" should not be refused for a few milliseconds.
+    if duration_ms is not None and end_ms > duration_ms + 1000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The clip ends after the recording does.",
+        )
+
+
+async def _check_captions(
+    captions: str | None, kind: str, project_id: str, session: SessionDep
+) -> None:
+    """Burned-in captions need a picture, and a translation that is ready."""
+    if captions is None:
+        return
+    if kind != "video":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Captions can only be burned into a video export.",
+        )
+    if captions == "original":
+        return
+    ready = await session.scalar(
+        select(Translation).where(
+            Translation.project_id == project_id,
+            Translation.language == captions,
+            Translation.status == "ready",
+        )
+    )
+    if ready is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Translate the captions into that language first.",
+        )
+
+
+def _filename(project_title: str, row: Export) -> str:
+    name = project_title[:60] or "visiovox"
+    if row.speaker_ordinal is not None:
+        name += f"-speaker-{row.speaker_ordinal}"
+    if row.start_ms is not None and row.end_ms is not None:
+        name += f"-{row.start_ms // 1000}s-{row.end_ms // 1000}s"
+    if row.captions:
+        name += f"-captions-{row.captions}"
+    if row.quality:
+        name += f"-{row.quality}"
+    return name + (".m4a" if row.kind == "audio" else ".mp4")
 
 
 def _enqueue_export(export_id: str) -> None:
@@ -209,16 +287,44 @@ async def download_export(
             detail="This export has expired. Request it again to re-render it.",
         )
 
-    filename = f"{project.title[:60] or 'visiovox'}"
-    if row.speaker_ordinal is not None:
-        filename += f"-speaker-{row.speaker_ordinal}"
-    if row.quality:
-        filename += f"-{row.quality}"
-    filename += ".m4a" if row.kind == "audio" else ".mp4"
-
     store = ObjectStore(settings)
-    url = await store.presign_get(row.storage_key, download_as=filename)
+    url = await store.presign_get(row.storage_key, download_as=_filename(project.title, row))
     return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
+
+@router.get("/{project_id}/exports/{export_id}/link")
+async def export_link(
+    export_id: str,
+    project: OwnedProject,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> ExportLinkResponse:
+    """The signed download URL as data.
+
+    The redirect above needs the request to carry the bearer token, which a
+    plain link cannot: a browser navigating to an href sends no Authorization
+    header, so the download answered 401. The page fetches this (with the
+    token) and then navigates to the signed URL, which needs none.
+    """
+    row = await session.scalar(
+        select(Export).where(Export.id == export_id, Export.project_id == project.id)
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="export not found")
+    if row.status != "ready" or row.storage_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=f"This export is {row.status}."
+        )
+    if row.expires_at is not None and row.expires_at < dt.datetime.now(dt.UTC):
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="This export has expired. Request it again to re-render it.",
+        )
+    filename = _filename(project.title, row)
+    store = ObjectStore(settings)
+    return ExportLinkResponse(
+        url=await store.presign_get(row.storage_key, download_as=filename), filename=filename
+    )
 
 
 @router.get("/{project_id}/usage")

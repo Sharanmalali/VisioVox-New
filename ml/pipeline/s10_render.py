@@ -85,6 +85,17 @@ def _ffmpeg() -> str:
     return "ffmpeg"
 
 
+def _trim(start_ms: int | None, end_ms: int | None) -> list[str]:
+    """Input options cutting [start, end) - placed before each -i, so both
+    streams are cut at the same instant."""
+    argv: list[str] = []
+    if start_ms is not None:
+        argv += ["-ss", f"{start_ms / 1000:.3f}"]
+    if end_ms is not None:
+        argv += ["-to", f"{end_ms / 1000:.3f}"]
+    return argv
+
+
 def render_mp4(
     *,
     video: Path,
@@ -92,14 +103,23 @@ def render_mp4(
     out: Path,
     rendition: Rendition | None,
     source_height: int | None,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+    subtitles: Path | None = None,
 ) -> Path:
     """Mux `audio` onto `video`, scaling only when the rung is below the source.
+
+    `start_ms`/`end_ms` cut a clip; `subtitles` (an .ass file, s10_captions)
+    is burned into the picture. Either means re-encoding the video: a copied
+    stream can only be cut at keyframes, seconds away from where asked, and
+    cannot be drawn on.
 
     `-movflags +faststart` moves the index to the front so the file starts
     playing before it has finished downloading. Without it a 2 GB export appears
     broken in a browser until the last byte lands.
     """
     out.parent.mkdir(parents=True, exist_ok=True)
+    trim = _trim(start_ms, end_ms)
 
     argv = [
         _ffmpeg(),
@@ -110,8 +130,10 @@ def render_mp4(
         # costs nothing and the habit is what keeps an SSRF vector closed.
         "-protocol_whitelist",
         "file",
+        *trim,
         "-i",
         str(video),
+        *trim,
         "-i",
         str(audio),
         "-map",
@@ -123,19 +145,24 @@ def render_mp4(
     needs_scale = (
         rendition is not None and source_height is not None and rendition.height < source_height
     )
+    filters: list[str] = []
     if needs_scale and rendition is not None:
-        argv += [
-            "-vf",
-            # -2 keeps the width even, which H.264 requires; odd dimensions are
-            # a surprisingly common cause of "it encoded but nothing plays it".
-            f"scale=-2:{rendition.height}",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-b:v",
-            rendition.video_bitrate,
-        ]
+        # -2 keeps the width even, which H.264 requires; odd dimensions are
+        # a surprisingly common cause of "it encoded but nothing plays it".
+        filters.append(f"scale=-2:{rendition.height}")
+    if subtitles is not None:
+        # After scaling, so captions are drawn at the output's resolution.
+        # The path is ours (no quotes or colons), escaped for the filter graph.
+        escaped = str(subtitles).replace("\\", "/").replace(":", "\\:")
+        filters.append(f"subtitles=filename='{escaped}'")
+    if filters or trim:
+        argv += ["-c:v", "libx264", "-preset", "veryfast"]
+        argv += ["-vf", ",".join(filters)] if filters else []
+        argv += (
+            ["-b:v", rendition.video_bitrate]
+            if needs_scale and rendition is not None
+            else ["-crf", "20"]
+        )
     else:
         # The common path: same picture, new audio. A remux at I/O speed rather
         # than a transcode.
@@ -158,9 +185,16 @@ def render_mp4(
     return out
 
 
-def render_audio(*, audio: Path, out: Path, bitrate: str = "192k") -> Path:
+def render_audio(
+    *,
+    audio: Path,
+    out: Path,
+    bitrate: str = "192k",
+    start_ms: int | None = None,
+    end_ms: int | None = None,
+) -> Path:
     """An audio-only export, for a source that had no video or a caller who
-    wants just the isolated voice."""
+    wants just the isolated voice; optionally one clip of it."""
     out.parent.mkdir(parents=True, exist_ok=True)
     argv = [
         _ffmpeg(),
@@ -169,6 +203,7 @@ def render_audio(*, audio: Path, out: Path, bitrate: str = "192k") -> Path:
         "-y",
         "-protocol_whitelist",
         "file",
+        *_trim(start_ms, end_ms),
         "-i",
         str(audio),
         "-c:a",

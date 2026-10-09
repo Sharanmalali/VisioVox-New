@@ -1,43 +1,89 @@
 'use client';
 
 /**
- * Download and share (docs/28 §W6, §W7) — the restrained surface.
+ * Download and share (docs/28 §W6, §W7; clips and captions ADR-0022).
  *
  * The quality list comes from the server, which derives it from the source's
  * real height, so a 720p upload is never offered 1080p. A menu that lists
  * qualities the recording cannot produce is worse than a short menu.
  *
+ * An export can be the whole recording or one clip of it - set here, or from a
+ * transcript line - and can carry captions in the picture, in the original or
+ * any language already translated. Burned-in captions play wherever the video
+ * does, including feeds that autoplay muted.
+ *
  * Sharing is deliberately honest about what a browser can do (docs/28 §D3):
- * `navigator.share` with a file opens the native sheet — Instagram, WhatsApp,
- * whatever the device has — and where that is unavailable the options are a
- * WhatsApp link and copy-to-clipboard. There is no button claiming to post
+ * `navigator.share` with a file opens the native sheet; where that is
+ * unavailable the link is copied. There is no button claiming to post
  * somewhere it cannot.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 
-import { IconDownload, IconShare } from '@/components/icons';
+import { IconDownload, IconFilm, IconShare, IconX } from '@/components/icons';
 import { Alert, Badge, Button, Select, Slab, SlabHead, SpeakerDot, Spinner } from '@/components/ui';
+import { readableTime } from '@/lib/playback/transcript';
 import { formatBytes } from '@/lib/upload/resumable';
 import { api } from '@/lib/store';
 import type { ExportResponse, RenditionOption } from '@visiovox/ts-client';
 
 const POLL_MS = 2000;
 
+export interface Clip {
+  readonly start_ms: number;
+  readonly end_ms: number;
+}
+
 interface Props {
   projectId: string;
   projectTitle: string;
   speakers: { ordinal: number; label: string }[];
+  durationMs: number | null;
+  /** The clip to export, or null for the whole recording. */
+  clip: Clip | null;
+  onClipChange: (clip: Clip | null) => void;
+  /** Languages captions can be burned in: "original" and ready translations. */
+  captionOptions: { code: string; label: string }[];
 }
 
-export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
+/** "1:05" or "65" -> ms; null when unreadable. */
+function parseTime(value: string): number | null {
+  const parts = value.trim().split(':').map(Number);
+  if (parts.length === 0 || parts.length > 3 || parts.some((p) => !Number.isFinite(p) || p < 0))
+    return null;
+  return Math.round(parts.reduce((acc, p) => acc * 60 + p, 0) * 1000);
+}
+
+function currentVideoMs(): number | null {
+  const video = document.querySelector('video');
+  return video === null ? null : Math.round(video.currentTime * 1000);
+}
+
+export function ExportPanel({
+  projectId,
+  projectTitle,
+  speakers,
+  durationMs,
+  clip,
+  onClipChange,
+  captionOptions,
+}: Props) {
   const [options, setOptions] = useState<RenditionOption[]>([]);
   const [exports, setExports] = useState<ExportResponse[]>([]);
   const [speaker, setSpeaker] = useState<number>(speakers[0]?.ordinal ?? 1);
   const [quality, setQuality] = useState<string>('');
+  const [captions, setCaptions] = useState<string>('none');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [shareNote, setShareNote] = useState<string | null>(null);
+  const [startText, setStartText] = useState('');
+  const [endText, setEndText] = useState('');
+
+  // Keep the editable fields in step when a clip is set from the transcript.
+  useEffect(() => {
+    setStartText(clip === null ? '' : readableTime(clip.start_ms));
+    setEndText(clip === null ? '' : readableTime(clip.end_ms));
+  }, [clip]);
 
   const refresh = useCallback(async () => {
     const list = await api().listExports(projectId);
@@ -69,15 +115,44 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
     };
   }, [exports, refresh]);
 
+  const isAudio = quality === 'audio';
+
+  function applyTyped(which: 'start' | 'end', text: string) {
+    const ms = parseTime(text);
+    if (ms === null) return;
+    const base = clip ?? { start_ms: 0, end_ms: durationMs ?? ms };
+    onClipChange(which === 'start' ? { ...base, start_ms: ms } : { ...base, end_ms: ms });
+  }
+
+  function setFromPlayer(which: 'start' | 'end') {
+    const ms = currentVideoMs();
+    if (ms === null) return;
+    const base = clip ?? { start_ms: 0, end_ms: durationMs ?? ms };
+    onClipChange(which === 'start' ? { ...base, start_ms: ms } : { ...base, end_ms: ms });
+  }
+
+  const clipProblem =
+    clip === null
+      ? null
+      : clip.end_ms - clip.start_ms < 500
+        ? 'The clip must end at least half a second after it starts.'
+        : durationMs !== null && clip.end_ms > durationMs + 1000
+          ? 'The clip ends after the recording does.'
+          : null;
+
   async function request() {
+    if (clipProblem !== null) return;
     setBusy(true);
     setError(null);
     try {
-      const kind = quality === 'audio' ? 'audio' : 'video';
+      const kind = isAudio ? 'audio' : 'video';
       await api().createExport(projectId, {
         kind,
         speaker_ordinal: speaker,
         quality: kind === 'audio' ? null : quality,
+        start_ms: clip?.start_ms ?? null,
+        end_ms: clip?.end_ms ?? null,
+        captions: kind === 'video' && captions !== 'none' ? captions : null,
       });
       await refresh();
     } catch (err) {
@@ -87,23 +162,35 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
     }
   }
 
-  function downloadUrl(row: ExportResponse): string {
-    return api().exportDownloadUrl(projectId, row.id);
+  // The signed URL is fetched with the session's token, then navigated to: a
+  // plain link to the API carries no token and would be refused.
+  async function download(row: ExportResponse) {
+    setError(null);
+    try {
+      const link = await api().exportLink(projectId, row.id);
+      window.location.assign(link.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The download link could not be made.');
+    }
   }
 
   async function share(row: ExportResponse) {
     setShareNote(null);
-    const url = new URL(downloadUrl(row), window.location.origin).toString();
-    const title = `${projectTitle} — speaker ${String(row.speaker_ordinal ?? 1)}`;
+    let link: { url: string; filename: string };
+    try {
+      link = await api().exportLink(projectId, row.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The link could not be made.');
+      return;
+    }
+    const title = `${projectTitle} - ${describe(row)}`;
 
     // Sharing the FILE is the good path: it lands in the target app as media
     // rather than as a link somebody else may not be able to open.
     try {
-      const response = await fetch(url);
+      const response = await fetch(link.url);
       const blob = await response.blob();
-      const file = new File([blob], `${title}.${row.kind === 'audio' ? 'm4a' : 'mp4'}`, {
-        type: blob.type,
-      });
+      const file = new File([blob], link.filename, { type: blob.type });
       if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title });
         return;
@@ -115,7 +202,7 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
 
     if (typeof navigator.share === 'function') {
       try {
-        await navigator.share({ title, url });
+        await navigator.share({ title, url: link.url });
         return;
       } catch {
         /* dismissed */
@@ -123,11 +210,26 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
     }
 
     try {
-      await navigator.clipboard.writeText(url);
-      setShareNote('Link copied. Note it expires when the download does.');
+      await navigator.clipboard.writeText(link.url);
+      setShareNote('Link copied. It works for a limited time.');
     } catch {
-      setShareNote(url);
+      setShareNote(link.url);
     }
+  }
+
+  function describe(row: ExportResponse): string {
+    const who =
+      speakers.find((s) => s.ordinal === row.speaker_ordinal)?.label ??
+      (row.speaker_ordinal ? `Speaker ${String(row.speaker_ordinal)}` : 'Everyone');
+    const part =
+      row.start_ms != null && row.end_ms != null
+        ? ` · ${readableTime(row.start_ms)}–${readableTime(row.end_ms)}`
+        : '';
+    const cc =
+      row.captions != null
+        ? ` · captions (${captionOptions.find((o) => o.code === row.captions)?.label ?? row.captions})`
+        : '';
+    return `${who}${part}${cc}`;
   }
 
   const videoOptions = options.filter((o) => o.kind === 'video');
@@ -137,7 +239,7 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
       <SlabHead
         icon={<IconDownload size={17} />}
         label="Download"
-        description="Export one speaker as video or audio."
+        description="One speaker's voice, as video or audio - whole or a clip, with captions if you like."
         right={options.length === 0 ? <Spinner label="Loading options" /> : undefined}
       />
       <div className="flex flex-col gap-5 p-5 sm:p-6">
@@ -172,8 +274,112 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
           </Select>
         </div>
 
-        <Button onClick={() => void request()} loading={busy} busyLabel="Preparing…" full>
-          Prepare download
+        <fieldset className="flex flex-col gap-3">
+          <legend className="mb-1.5 text-[13px] font-medium">Part</legend>
+          <div className="seg w-fit" role="group" aria-label="Part of the recording">
+            <button
+              type="button"
+              className={clip === null ? 'seg-on' : ''}
+              onClick={() => {
+                onClipChange(null);
+              }}
+            >
+              Whole recording
+            </button>
+            <button
+              type="button"
+              className={clip !== null ? 'seg-on' : ''}
+              onClick={() => {
+                if (clip === null) {
+                  const now = currentVideoMs() ?? 0;
+                  const end = Math.min(now + 30_000, durationMs ?? now + 30_000);
+                  onClipChange({ start_ms: now, end_ms: Math.max(end, now + 500) });
+                }
+              }}
+            >
+              A clip
+            </button>
+          </div>
+          {clip !== null && (
+            <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-border-subtle bg-bg-subtle p-3">
+              <div className="flex flex-wrap items-end gap-3">
+                {(['start', 'end'] as const).map((which) => (
+                  <label key={which} className="flex flex-col gap-1 text-[12px] font-medium">
+                    {which === 'start' ? 'From' : 'To'}
+                    <span className="flex items-center gap-1.5">
+                      <input
+                        value={which === 'start' ? startText : endText}
+                        onChange={(e) => {
+                          if (which === 'start') setStartText(e.target.value);
+                          else setEndText(e.target.value);
+                        }}
+                        onBlur={(e) => {
+                          applyTyped(which, e.target.value);
+                        }}
+                        inputMode="numeric"
+                        aria-label={which === 'start' ? 'Clip starts at' : 'Clip ends at'}
+                        className="h-9 w-20 rounded-[var(--radius-sm)] border border-border-default bg-bg-surface px-2 font-mono text-[13px] outline-none focus-visible:border-accent"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFromPlayer(which);
+                        }}
+                        className="h-9 rounded-[var(--radius-sm)] px-2 text-[12px] font-medium text-accent hover:bg-accent-soft"
+                      >
+                        Now
+                      </button>
+                    </span>
+                  </label>
+                ))}
+                <span className="pb-2 text-[12.5px] text-fg-muted tabular">
+                  {String(Math.max(0, Math.round((clip.end_ms - clip.start_ms) / 1000)))} s
+                </span>
+                <button
+                  type="button"
+                  aria-label="Export the whole recording instead"
+                  onClick={() => {
+                    onClipChange(null);
+                  }}
+                  className="ml-auto grid size-8 place-items-center rounded-[var(--radius-sm)] text-fg-muted hover:bg-bg-surface"
+                >
+                  <IconX size={14} />
+                </button>
+              </div>
+              <p className="text-[12px] text-fg-muted">
+                Tip: the clip button on any transcript line sets this to that line; using it on a
+                later line stretches the clip to cover both.
+              </p>
+              {clipProblem !== null && <p className="text-[12px] text-danger">{clipProblem}</p>}
+            </div>
+          )}
+        </fieldset>
+
+        {!isAudio && (
+          <Select
+            label="Captions in the picture"
+            value={captions}
+            onChange={(e) => {
+              setCaptions(e.target.value);
+            }}
+          >
+            <option value="none">None</option>
+            {captionOptions.map((o) => (
+              <option key={o.code} value={o.code}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+        )}
+
+        <Button
+          onClick={() => void request()}
+          loading={busy}
+          busyLabel="Preparing…"
+          disabled={clipProblem !== null}
+          full
+        >
+          {clip === null ? 'Prepare download' : 'Prepare clip'}
         </Button>
 
         {videoOptions.length === 0 && options.length > 0 && (
@@ -189,10 +395,12 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
           <ul className="flex flex-col divide-y divide-border-subtle rounded-[var(--radius-md)] border border-border-subtle">
             {exports.map((row) => (
               <li key={row.id} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-                <SpeakerDot index={row.speaker_ordinal ?? 1} size={10} />
-                <span className="font-medium">
-                  {row.speaker_ordinal ? `Speaker ${String(row.speaker_ordinal)}` : 'All speakers'}
-                </span>
+                {row.start_ms != null ? (
+                  <IconFilm size={14} className="text-fg-muted" />
+                ) : (
+                  <SpeakerDot index={row.speaker_ordinal ?? 1} size={10} />
+                )}
+                <span className="min-w-0 font-medium">{describe(row)}</span>
                 <span className="text-fg-muted">{row.quality ? row.quality : 'audio'}</span>
                 {row.size_bytes !== null && (
                   <span className="font-mono text-[12px] text-fg-muted">
@@ -203,14 +411,10 @@ export function ExportPanel({ projectId, projectTitle, speakers }: Props) {
                 <span className="ml-auto flex items-center gap-2">
                   {row.status === 'ready' ? (
                     <>
-                      <a
-                        href={downloadUrl(row)}
-                        download
-                        className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border-default bg-bg-surface px-3 text-[13px] font-medium shadow-xs transition-colors hover:border-border-strong hover:bg-bg-subtle"
-                      >
+                      <Button size="sm" variant="secondary" onClick={() => void download(row)}>
                         <IconDownload size={14} />
                         Download
-                      </a>
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => void share(row)}>
                         <IconShare size={14} />
                         Share

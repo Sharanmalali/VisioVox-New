@@ -6,17 +6,20 @@ import { useCallback, useEffect, useState } from 'react';
 import type { JobResponse, ProjectResponse } from '@visiovox/ts-client';
 
 import { ExportPanel } from '@/components/ExportPanel';
+import type { Clip } from '@/components/ExportPanel';
 import { InsightsPanel, insightBlocks, insightsFor } from '@/components/InsightsPanel';
 import { IconChevronDown, IconChevronRight, IconInfo } from '@/components/icons';
 import { Player } from '@/components/Player';
 import { ProcessingView } from '@/components/ProcessingView';
 import { SharePanel } from '@/components/SharePanel';
+import { SummaryPanel, summaryBlocks, useSummary } from '@/components/SummaryPanel';
 import { TranscriptPanel } from '@/components/TranscriptPanel';
 import { TranslateMenu, useTranslations } from '@/components/Translation';
 import { AppPage, AppShell } from '@/components/shell/AppShell';
 import { Alert, Badge, Skeleton, Slab } from '@/components/ui';
 import { clockDuration, languageName, statusMeta } from '@/lib/format';
 import type { Manifest } from '@/lib/playback/manifest';
+import type { TranscriptLine } from '@/lib/playback/transcript';
 import { accessToken, api, useRequireSignIn } from '@/lib/store';
 
 interface Progress {
@@ -69,6 +72,31 @@ export default function ProjectPage() {
   // out without a token.
   const authed = useRequireSignIn();
   const translation = useTranslations(projectId, manifest);
+  const summary = useSummary(projectId, manifest !== null);
+
+  // The stretch to download, set from the Export panel or from transcript
+  // lines: a line's clip button sets it, and on a later line stretches it.
+  const [clip, setClip] = useState<Clip | null>(null);
+  const clipLine = useCallback((line: TranscriptLine) => {
+    setClip((current) =>
+      current === null
+        ? { start_ms: line.start_ms, end_ms: line.end_ms }
+        : {
+            start_ms: Math.min(current.start_ms, line.start_ms),
+            end_ms: Math.max(current.end_ms, line.end_ms),
+          },
+    );
+    document.getElementById('downloads')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+  const captionOptions = [
+    { code: 'original', label: 'As spoken' },
+    ...translation.items
+      .filter((i) => i.status === 'ready')
+      .map((i) => ({
+        code: i.language,
+        label: translation.languages.find((l) => l.code === i.language)?.native ?? i.language,
+      })),
+  ];
   const translatingTo = translation.languages.find((l) => l.code === translation.active);
   const translationNotice =
     translation.error !== null ? (
@@ -293,8 +321,12 @@ export default function ProjectPage() {
                       translated={translation.texts}
                       headerExtra={<TranslateMenu state={translation} />}
                       notice={translationNotice}
-                      docxPreamble={() =>
-                        insightBlocks(
+                      onClip={clipLine}
+                      docxPreamble={() => [
+                        ...(summary.content !== null
+                          ? summaryBlocks(summary.content, context.nameOf)
+                          : []),
+                        ...insightBlocks(
                           insightsFor(
                             context.lines,
                             context.speakers.map((s) => s.ordinal),
@@ -302,12 +334,15 @@ export default function ProjectPage() {
                             context.activity,
                           ),
                           context.nameOf,
-                        )
-                      }
+                        ),
+                      ]}
                     />
                   )}
                   below={(context) => (
-                    <InsightsPanel context={context} durationMs={manifest.duration_ms} />
+                    <>
+                      <SummaryPanel context={context} summary={summary} />
+                      <InsightsPanel context={context} durationMs={manifest.duration_ms} />
+                    </>
                   )}
                 />
               </Slab>
@@ -316,11 +351,15 @@ export default function ProjectPage() {
             )}
 
             {project.status === 'ready' && (
-              <div className="grid items-start gap-6 lg:grid-cols-2">
+              <div id="downloads" className="grid scroll-mt-24 items-start gap-6 lg:grid-cols-2">
                 <ExportPanel
                   projectId={projectId}
                   projectTitle={project.title}
                   speakers={speakers}
+                  durationMs={project.duration_ms}
+                  clip={clip}
+                  onClipChange={setClip}
+                  captionOptions={captionOptions}
                 />
                 <SharePanel
                   projectId={projectId}

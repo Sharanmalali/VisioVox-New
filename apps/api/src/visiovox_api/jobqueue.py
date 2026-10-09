@@ -23,6 +23,7 @@ REAL_PIPELINE_TASK = "visiovox.run_real_pipeline"
 MOCK_PIPELINE_TASK = "visiovox.run_mock_pipeline"
 RENDER_EXPORT_TASK = "visiovox.render_export"
 TRANSLATE_TASK = "visiovox.translate_captions"
+SUMMARY_TASK = "visiovox.summarize"
 
 # The single-concurrency queue the GPU worker serves. Renders share it: not for
 # the GPU, but because a render beside an extraction contends for the same disk
@@ -56,6 +57,11 @@ def enqueue_mock(job_id: str) -> None:
 
 def enqueue_export(export_id: str) -> None:
     _producer().send_task(RENDER_EXPORT_TASK, args=[export_id], queue=GPU_QUEUE)
+
+
+def enqueue_summary(summary_id: str) -> None:
+    # The GPU queue: the language model shares the card with extraction.
+    _producer().send_task(SUMMARY_TASK, args=[summary_id], queue=GPU_QUEUE)
 
 
 def enqueue_translation(translation_id: str) -> None:

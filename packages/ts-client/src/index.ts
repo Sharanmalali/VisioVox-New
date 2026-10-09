@@ -36,6 +36,8 @@ export type CompletedPart = Schemas['CompletedPart'];
 export type TranslationResponse = Schemas['TranslationResponse'];
 export type TranslationListResponse = Schemas['TranslationListResponse'];
 export type TranslationLanguageOption = Schemas['TranslationLanguageOption'];
+export type SummaryResponse = Schemas['SummaryResponse'];
+export type ExportLinkResponse = Schemas['ExportLinkResponse'];
 
 export const CLIENT_VERSION = '0.1.0' as const;
 
@@ -286,6 +288,28 @@ export class VisioVoxClient {
    */
   exportDownloadUrl(projectId: string, exportId: string): string {
     return `${this.baseUrl}/v1/projects/${projectId}/exports/${exportId}/download`;
+  }
+
+  /**
+   * The signed download URL, fetched with the bearer token. Navigate to it to
+   * download: a plain link to `exportDownloadUrl` carries no token and is
+   * refused.
+   */
+  exportLink(projectId: string, exportId: string): Promise<ExportLinkResponse> {
+    return this.request<ExportLinkResponse>(`/v1/projects/${projectId}/exports/${exportId}/link`);
+  }
+
+  // ---- summary and action items ----
+
+  getSummary(projectId: string): Promise<SummaryResponse> {
+    return this.request<SummaryResponse>(`/v1/projects/${projectId}/summary`);
+  }
+
+  /** Write the summary, or write it again. */
+  requestSummary(projectId: string): Promise<SummaryResponse> {
+    return this.request<SummaryResponse>(`/v1/projects/${projectId}/summary`, {
+      method: 'POST',
+    });
   }
 
   /**

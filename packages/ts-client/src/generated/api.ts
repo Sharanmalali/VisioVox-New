@@ -222,6 +222,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/exports/{export_id}/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Link
+         * @description The signed download URL as data.
+         *
+         *     The redirect above needs the request to carry the bearer token, which a
+         *     plain link cannot: a browser navigating to an href sends no Authorization
+         *     header, so the download answered 401. The page fetches this (with the
+         *     token) and then navigates to the signed URL, which needs none.
+         */
+        get: operations["export_link_v1_projects__project_id__exports__export_id__link_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/job": {
         parameters: {
             query?: never;
@@ -315,6 +340,27 @@ export interface paths {
          */
         put: operations["rename_speaker_v1_projects__project_id__speakers__ordinal__name_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary */
+        get: operations["get_summary_v1_projects__project_id__summary_get"];
+        put?: never;
+        /**
+         * Request Summary
+         * @description Write the summary, or write it again (names may have changed).
+         */
+        post: operations["request_summary_v1_projects__project_id__summary_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -500,6 +546,10 @@ export interface components {
          * @description Ask for one rendered file.
          */
         CreateExportRequest: {
+            /** Captions */
+            captions?: string | null;
+            /** End Ms */
+            end_ms?: number | null;
             /**
              * Kind
              * @default video
@@ -510,6 +560,8 @@ export interface components {
             quality?: string | null;
             /** Speaker Ordinal */
             speaker_ordinal?: number | null;
+            /** Start Ms */
+            start_ms?: number | null;
         };
         /** CreateProjectRequest */
         CreateProjectRequest: {
@@ -556,6 +608,16 @@ export interface components {
             /** Detail */
             detail: string;
         };
+        /**
+         * ExportLinkResponse
+         * @description A short-lived, signed URL the browser can navigate to directly.
+         */
+        ExportLinkResponse: {
+            /** Filename */
+            filename: string;
+            /** Url */
+            url: string;
+        };
         /** ExportListResponse */
         ExportListResponse: {
             /** Items */
@@ -563,11 +625,15 @@ export interface components {
         };
         /** ExportResponse */
         ExportResponse: {
+            /** Captions */
+            captions?: string | null;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+            /** End Ms */
+            end_ms?: number | null;
             /** Expires At */
             expires_at: string | null;
             /** Id */
@@ -582,6 +648,8 @@ export interface components {
             size_bytes: number | null;
             /** Speaker Ordinal */
             speaker_ordinal: number | null;
+            /** Start Ms */
+            start_ms?: number | null;
             /** Status */
             status: string;
         };
@@ -762,6 +830,19 @@ export interface components {
             speaker_ordinal: number | null;
             /** Token */
             token?: string | null;
+        };
+        /** SummaryResponse */
+        SummaryResponse: {
+            /** Content */
+            content?: {
+                [key: string]: unknown;
+            } | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Status */
+            status: string;
         };
         /** TranslatedSpeaker */
         TranslatedSpeaker: {
@@ -1615,6 +1696,56 @@ export interface operations {
             };
         };
     };
+    export_link_v1_projects__project_id__exports__export_id__link_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExportLinkResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_job_v1_projects__project_id__job_get: {
         parameters: {
             query?: never;
@@ -1888,6 +2019,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_summary_v1_projects__project_id__summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    request_summary_v1_projects__project_id__summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryResponse"];
                 };
             };
             /** @description Unauthorized */

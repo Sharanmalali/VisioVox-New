@@ -24,7 +24,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from visiovox_api.config import Settings, get_settings
-from visiovox_api.models import Export, Job, Project, Translation, UsageCounter, new_id
+from visiovox_api.models import (
+    Export,
+    Job,
+    Project,
+    Summary,
+    Translation,
+    UsageCounter,
+    new_id,
+)
 from visiovox_api.storage import StorageError
 
 from .real_pipeline import INFORMATIONAL_WARNINGS, PipelineError, run_pipeline
@@ -376,9 +384,52 @@ def _speaker_audio_path(project: Project, ordinal: int | None) -> Path:
     return base / f"spk_{ordinal}_f.m4a"
 
 
+def _burned_captions(project: Project, row: Export, work: Path) -> Path | None:
+    """An .ass file of this export's captions, or None when it has none.
+
+    The exported speaker's own captions (their audio is the only voice in the
+    file), or everyone's - with names - for the original mix. Translated when
+    `row.captions` names a language; shifted so a clip starts at zero.
+    """
+    import json
+
+    from pipeline import s10_captions
+
+    if row.captions is None or project.manifest is None:
+        return None
+    base = Path(settings.media_root) / "projects" / project.id
+    folder = base if row.captions == "original" else base / "translations" / row.captions
+    ordinals = [
+        sp["ordinal"]
+        for sp in project.manifest.get("speakers", [])
+        if isinstance(sp, dict) and isinstance(sp.get("ordinal"), int)
+    ]
+    wanted = ordinals if row.speaker_ordinal is None else [row.speaker_ordinal]
+    captions = {
+        o: json.loads((folder / f"spk_{o}.json").read_text(encoding="utf-8"))
+        for o in wanted
+        if (folder / f"spk_{o}.json").is_file()
+    }
+    names = None
+    if len(wanted) > 1:
+        names = {o: (project.speaker_names or {}).get(str(o)) or f"Speaker {o}" for o in wanted}
+    document = s10_captions.build_ass(
+        s10_captions.cues_from_captions(captions),
+        width=project.width or 1280,
+        height=project.height or 720,
+        names=names,
+        clip_start_ms=row.start_ms or 0,
+        clip_end_ms=row.end_ms,
+    )
+    path = work / f"{row.id}.ass"
+    path.write_text(document, encoding="utf-8")
+    return path
+
+
 @celery_app.task(name="visiovox.render_export", bind=True, max_retries=1)
 def render_export(self: Any, export_id: str) -> dict[str, Any]:
-    """Render one export and publish it for download."""
+    """Render one export - optionally a clip, optionally captioned - and
+    publish it to the object store for download."""
     from pipeline import s10_render
 
     with _Session() as session:
@@ -393,6 +444,13 @@ def render_export(self: Any, export_id: str) -> dict[str, Any]:
         row.status = "running"
         session.commit()
 
+        def fail(reason: str) -> dict[str, Any]:
+            row.status = "failed"
+            row.error_detail = reason[:500]
+            row.finished_at = _now()
+            session.commit()
+            return {"status": "failed", "export_id": export_id, "reason": reason}
+
         work = Path(settings.media_work_dir)
         work.mkdir(parents=True, exist_ok=True)
         out_dir = Path(settings.media_root) / "exports" / project.id
@@ -400,26 +458,32 @@ def render_export(self: Any, export_id: str) -> dict[str, Any]:
 
         audio = _speaker_audio_path(project, row.speaker_ordinal)
         if not audio.is_file():
-            row.status = "failed"
-            row.error_detail = "the isolated track for this speaker is no longer available"
-            row.finished_at = _now()
-            session.commit()
-            return {"status": "failed", "export_id": export_id, "reason": "audio_missing"}
+            return fail("the isolated track for this speaker is no longer available")
 
         suffix = "m4a" if row.kind == "audio" else "mp4"
-        name = f"{row.speaker_ordinal or 'all'}-{row.quality or row.kind}.{suffix}"
+        clip = f"-{row.start_ms}-{row.end_ms}" if row.start_ms is not None else ""
+        captions = f"-cc-{row.captions}" if row.captions else ""
+        name = f"{row.speaker_ordinal or 'all'}-{row.quality or row.kind}{clip}{captions}.{suffix}"
         destination = out_dir / name
+        subtitles: Path | None = None
 
         try:
             if row.kind == "audio":
-                s10_render.render_audio(audio=audio, out=destination)
+                s10_render.render_audio(
+                    audio=audio, out=destination, start_ms=row.start_ms, end_ms=row.end_ms
+                )
             else:
-                source_video = Path(settings.media_root) / "projects" / project.id / "source.mp4"
+                # S9's picture: the normalised video the player shows. (This
+                # read "source.mp4", which packaging never writes, so every
+                # video export silently came out as audio.)
+                source_video = Path(settings.media_root) / "projects" / project.id / "video.mp4"
                 if not source_video.is_file():
                     # No video to mux onto: give them the audio rather than
                     # failing, and say so. Invariant 8 in miniature.
-                    s10_render.render_audio(audio=audio, out=destination.with_suffix(".m4a"))
                     destination = destination.with_suffix(".m4a")
+                    s10_render.render_audio(
+                        audio=audio, out=destination, start_ms=row.start_ms, end_ms=row.end_ms
+                    )
                     row.kind = "audio"
                 else:
                     # Resolved against what this source actually offers rather
@@ -434,21 +498,42 @@ def render_export(self: Any, export_id: str) -> dict[str, Any]:
                         ),
                         None,
                     )
+                    subtitles = _burned_captions(project, row, work)
                     s10_render.render_mp4(
                         video=source_video,
                         audio=audio,
                         out=destination,
                         rendition=rendition,
                         source_height=project.height,
+                        start_ms=row.start_ms,
+                        end_ms=row.end_ms,
+                        subtitles=subtitles,
                     )
-        except s10_render.RenderError as exc:
-            row.status = "failed"
-            row.error_detail = str(exc)[:500]
-            row.finished_at = _now()
-            session.commit()
-            return {"status": "failed", "export_id": export_id, "reason": str(exc)}
+        except (s10_render.RenderError, OSError, ValueError) as exc:
+            return fail(str(exc))
+        finally:
+            if subtitles is not None:
+                subtitles.unlink(missing_ok=True)
 
-        row.storage_key = str(destination.relative_to(Path(settings.media_root)))
+        # Into the object store, which is what the download link signs. (The
+        # file used to stay on local disk, under a key the store never had.)
+        key = f"exports/{project.id}/{destination.name}"
+        try:
+            _s3_client(settings).upload_file(
+                str(destination),
+                settings.s3_bucket,
+                key,
+                ExtraArgs={
+                    "ContentType": _CONTENT_TYPES.get(
+                        destination.suffix, "application/octet-stream"
+                    )
+                },
+            )
+        except Exception as exc:
+            logger.exception("export %s could not be published", export_id)
+            return fail(f"the file could not be published: {exc}")
+
+        row.storage_key = key
         row.size_bytes = destination.stat().st_size
         row.status = "ready"
         row.finished_at = _now()
@@ -567,3 +652,106 @@ def translate_captions(self: Any, translation_id: str) -> dict[str, Any]:
         row.finished_at = _now()
         session.commit()
         return {"status": "ready", "translation_id": translation_id, "speakers": written}
+
+
+# --------------------------------------------------------------------------
+# summary and action items (ADR-0021)
+# --------------------------------------------------------------------------
+
+LLM_HOST = "http://127.0.0.1:11434"
+_LLM: Any = None
+
+
+def _ensure_llm() -> None:
+    """Start the local model server if it is not answering.
+
+    Started by the worker rather than installed as its own service: it lives
+    and dies with the worker's process group, and the model is only loaded
+    while summaries are being written (keep_alive in s11 lets it go after).
+    """
+    import os
+    import subprocess
+    import time
+    import urllib.request
+
+    global _LLM
+
+    def up() -> bool:
+        try:
+            with urllib.request.urlopen(f"{LLM_HOST}/api/tags", timeout=2):  # noqa: S310 - fixed loopback URL
+                return True
+        except OSError:
+            return False
+
+    if up():
+        return
+    home = Path.home()
+    env = {
+        **os.environ,
+        "OLLAMA_HOST": "127.0.0.1:11434",
+        "OLLAMA_MODELS": str(home / ".cache" / "ollama" / "models"),
+        # Under the worker's ProtectHome=read-only, only ~/.cache is writable.
+        "HOME": str(home / ".cache" / "ollama-home"),
+    }
+    log = (Path(settings.media_work_dir) / "ollama.log").open("ab")
+    _LLM = subprocess.Popen(  # noqa: S603 - fixed binary, no shell
+        [str(home / ".local" / "ollama" / "bin" / "ollama"), "serve"],
+        env=env,
+        stdout=log,
+        stderr=log,
+    )
+    for _ in range(60):
+        if up():
+            return
+        time.sleep(0.5)
+    raise RuntimeError("the summary model did not start")
+
+
+@celery_app.task(name="visiovox.summarize", bind=True, max_retries=0)
+def summarize(self: Any, summary_id: str) -> dict[str, Any]:
+    """Write one project's summary and action items."""
+    import json
+
+    from pipeline import s11_summarize
+
+    with _Session() as session:
+        row = session.get(Summary, summary_id)
+        if row is None:
+            return {"status": "missing", "summary_id": summary_id}
+        project = session.get(Project, row.project_id)
+
+        def fail(reason: str) -> dict[str, Any]:
+            row.status = "failed"
+            row.error_detail = reason[:500]
+            row.finished_at = _now()
+            session.commit()
+            return {"status": "failed", "summary_id": summary_id, "reason": reason}
+
+        if project is None or project.manifest is None:
+            return fail("the recording is no longer available")
+        row.status = "running"
+        session.commit()
+
+        base = Path(settings.media_root) / "projects" / project.id
+        captions: dict[int, dict[str, Any]] = {}
+        for speaker in project.manifest.get("speakers", []):
+            ordinal = speaker.get("ordinal") if isinstance(speaker, dict) else None
+            path = base / f"spk_{ordinal}.json"
+            if isinstance(ordinal, int) and path.is_file():
+                captions[ordinal] = json.loads(path.read_text(encoding="utf-8"))
+        lines = s11_summarize.lines_from_captions(captions)
+        if not lines:
+            return fail("this recording has no captions to summarise")
+        names = {o: (project.speaker_names or {}).get(str(o)) or f"Speaker {o}" for o in captions}
+        try:
+            _ensure_llm()
+            content = s11_summarize.summarise(lines, names, LLM_HOST)
+        except Exception as exc:
+            logger.exception("summary %s failed", summary_id)
+            return fail(f"the summary could not be written: {exc}")
+
+        row.content = content
+        row.status = "ready"
+        row.finished_at = _now()
+        session.commit()
+        return {"status": "ready", "summary_id": summary_id, "lines": len(lines)}

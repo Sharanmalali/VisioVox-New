@@ -23,6 +23,30 @@
         "additionalProperties": false,
         "description": "Ask for one rendered file.",
         "properties": {
+          "captions": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captions"
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
           "kind": {
             "default": "video",
             "enum": ["video", "audio"],
@@ -52,6 +76,18 @@
               }
             ],
             "title": "Speaker Ordinal"
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms"
           }
         },
         "title": "CreateExportRequest",
@@ -164,6 +200,22 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "ExportLinkResponse": {
+        "description": "A short-lived, signed URL the browser can navigate to directly.",
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": ["url", "filename"],
+        "title": "ExportLinkResponse",
+        "type": "object"
+      },
       "ExportListResponse": {
         "properties": {
           "items": {
@@ -180,10 +232,32 @@
       },
       "ExportResponse": {
         "properties": {
+          "captions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Captions"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
             "type": "string"
+          },
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
           },
           "expires_at": {
             "anyOf": [
@@ -241,6 +315,17 @@
               }
             ],
             "title": "Speaker Ordinal"
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms"
           },
           "status": {
             "title": "Status",
@@ -755,6 +840,52 @@
           "created_at"
         ],
         "title": "ShareResponse",
+        "type": "object"
+      },
+      "SummaryResponse": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": ["status"],
+        "title": "SummaryResponse",
         "type": "object"
       },
       "TranslatedSpeaker": {
@@ -1975,6 +2106,77 @@
         "tags": ["exports"]
       }
     },
+    "/v1/projects/{project_id}/exports/{export_id}/link": {
+      "get": {
+        "description": "The signed download URL as data.\n\nThe redirect above needs the request to carry the bearer token, which a\nplain link cannot: a browser navigating to an href sends no Authorization\nheader, so the download answered 401. The page fetches this (with the\ntoken) and then navigates to the signed URL, which needs none.",
+        "operationId": "export_link_v1_projects__project_id__exports__export_id__link_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "title": "Export Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportLinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Export Link",
+        "tags": ["exports"]
+      }
+    },
     "/v1/projects/{project_id}/job": {
       "get": {
         "operationId": "get_job_v1_projects__project_id__job_get",
@@ -2375,6 +2577,127 @@
         },
         "summary": "Rename Speaker",
         "tags": ["projects"]
+      }
+    },
+    "/v1/projects/{project_id}/summary": {
+      "get": {
+        "operationId": "get_summary_v1_projects__project_id__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Summary",
+        "tags": ["summaries"]
+      },
+      "post": {
+        "description": "Write the summary, or write it again (names may have changed).",
+        "operationId": "request_summary_v1_projects__project_id__summary_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Request Summary",
+        "tags": ["summaries"]
       }
     },
     "/v1/projects/{project_id}/translations": {

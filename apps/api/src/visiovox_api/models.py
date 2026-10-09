@@ -373,6 +373,12 @@ class Export(Base):
     speaker_ordinal: Mapped[int | None] = mapped_column(Integer)
     kind: Mapped[str] = mapped_column(Text, nullable=False, server_default="video")
     quality: Mapped[str | None] = mapped_column(Text)
+    # A clip of the recording (ADR-0022); both None for the whole of it.
+    start_ms: Mapped[int | None] = mapped_column(Integer)
+    end_ms: Mapped[int | None] = mapped_column(Integer)
+    # Captions burned into the picture: None, "original", or a language code
+    # of a ready translation.
+    captions: Mapped[str | None] = mapped_column(Text)
 
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     storage_key: Mapped[str | None] = mapped_column(Text)
@@ -390,7 +396,11 @@ class Export(Base):
             "speaker_ordinal",
             "kind",
             "quality",
+            "start_ms",
+            "end_ms",
+            "captions",
             unique=True,
+            postgresql_nulls_not_distinct=True,
         ),
         Index("ix_exports_user_created", "user_id", "created_at"),
         CheckConstraint(
@@ -483,5 +493,36 @@ class Translation(Base):
         CheckConstraint(
             _in_list("status", ("queued", "running", "ready", "failed")),
             name="translations_status_check",
+        ),
+    )
+
+
+class Summary(Base):
+    """A project's summary and action items, written by a local model (ADR-0021).
+
+    One per project; asking again rewrites it (names may have changed since).
+    `content` is what ml/pipeline/s11_summarize.py returns: every item cites
+    transcript line ids, and only cited items are kept.
+    """
+
+    __tablename__ = "summaries"
+
+    id: Mapped[str] = _pk("sum")
+    project_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    content: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _now_col()
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            _in_list("status", ("queued", "running", "ready", "failed")),
+            name="summaries_status_check",
         ),
     )

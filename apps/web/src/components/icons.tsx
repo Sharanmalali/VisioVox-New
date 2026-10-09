@@ -358,6 +358,14 @@ export const IconChart = (p: IconProps) => (
   </Svg>
 );
 
+export const IconScissors = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="6" cy="6" r="3" />
+    <circle cx="6" cy="18" r="3" />
+    <path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12" />
+  </Svg>
+);
+
 export const IconLanguages = (p: IconProps) => (
   <Svg {...p}>
     <path d="M4 5h9M8.5 3v2M6 5c.7 3.3 3 6 6 7.5M11 5c-.8 3.8-3.4 7-7 8.5" />
