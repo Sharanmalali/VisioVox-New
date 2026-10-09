@@ -2,7 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-09
-- **Evidence:** docs/29 §10, `scripts/bench_ami_summary.py`
+- **Evidence:** docs/29 §10 (`scripts/bench_ami_summary.py`): 30/30 meetings, action items F1 0.34 (lexical floor), owners 15/26, decisions 0/90, 0 of 314 items uncited
 
 ## Context
 

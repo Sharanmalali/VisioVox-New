@@ -188,3 +188,40 @@ the label they anchor — land on other faces.
 Interruption detection is weak for every system, the oracle included (F1
 0.33): AMI's interruptions are short and the 2 s yield rule is coarse. The
 panel therefore presents interruptions as *moments to review* and says so.
+
+## 10. Follow-up: summary and action items (2026-10-09, deployed)
+
+The project page can write a summary - overview, key points, decisions and
+action items with owner and deadline - with Qwen2.5-7B-Instruct running
+locally through Ollama (ADR-0021). Every item must cite transcript line ids;
+items citing no real line are dropped, and owners must be real speakers.
+
+`scripts/bench_ami_summary.py` runs the deployed summariser on each of the 30
+meetings' **whole** transcript as AMI annotated it (hand-aligned words per
+participant, speakers named by role) and compares with the action items and
+decisions AMI's annotators wrote (`abstractive/*.abssumm.xml`). It therefore
+measures the summariser given a correctly attributed transcript; the
+separation's own errors (§2-3) are not compounded here. Matching is lexical
+(content words, role names removed, Dice >= 0.35, one-to-one), which misses
+paraphrases: the numbers are a floor.
+
+| Measure | Result (30 meetings) |
+|---|---|
+| Meetings summarised / failed | 30 / 0 |
+| Items dropped for citing no real line | 0 of 314 |
+| Action items, P / R / F1 | 0.29 / 0.40 / 0.34 (28 matched; 95 written, 70 annotated) |
+| Owner right, matched action items naming a role | 15 / 26 (58 %; four roles, chance 25 %) |
+| Decisions, P / R / F1 | 0.00 / 0.00 / 0.00 (11 written, 90 annotated) |
+| Median time per meeting (A5000) | 8.5 s |
+
+What this supports: action items with owners are found at a useful rate,
+every item is traceable to its lines, and nothing failed. What it does not:
+**decisions** - the model almost never lists them (11 against 90), and none
+of those matched. Many written action items that did not match are in-meeting
+activities (the AMI warm-up exercise of drawing an animal) that annotators did
+not record as actions. Two configuration changes were made during this run,
+before any number above: answers were cut off on one meeting, so the schema
+bounds list lengths and an unanswerable part is halved (ADR-0021), and the
+matcher removes role names because AMI writes the owner into the sentence
+while the product states it separately. Cached outputs were cleared and all
+30 meetings rerun after both. No prompt was tuned on these meetings.
