@@ -20,11 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from celery import Celery
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from visiovox_api.config import Settings, get_settings
 from visiovox_api.models import (
+    Dub,
     Export,
     Job,
     Project,
@@ -640,14 +641,60 @@ def _translator() -> Any:
     return _TRANSLATOR
 
 
-@celery_app.task(name="visiovox.translate_captions", bind=True, max_retries=0)
-def translate_captions(self: Any, translation_id: str) -> dict[str, Any]:
-    """Translate every speaker's captions of one project into one language."""
+def _run_translation(project: Project, language: str) -> str | None:
+    """Translate every speaker's captions into `language` and publish them.
+
+    Returns None on success, or why it could not be done.
+    """
     import json
 
     from pipeline import s8_translate
     from visiovox_api.translation_languages import BY_CODE, SOURCE_FLORES
 
+    target = BY_CODE.get(language)
+    if target is None:
+        return "this language is not offered"
+    assert project.manifest is not None
+    base = Path(settings.media_root) / "projects" / project.id
+    out_dir = base / "translations" / language
+    out_dir.mkdir(parents=True, exist_ok=True)
+    speakers = [s for s in project.manifest.get("speakers", []) if isinstance(s, dict)]
+    client = _s3_client(settings)
+    written = 0
+    for speaker in speakers:
+        ordinal = speaker.get("ordinal")
+        source_file = base / f"spk_{ordinal}.json"
+        if not source_file.is_file():
+            # A speaker without captions has nothing to translate.
+            continue
+        body = json.loads(source_file.read_text(encoding="utf-8"))
+        source = SOURCE_FLORES.get(str(body.get("language")))
+        if source is None:
+            return f"captions in '{body.get('language')}' cannot be translated by this model"
+        try:
+            translated = s8_translate.translate_transcript(
+                body, source, target.nllb, target.code, _translator()
+            )
+        except Exception as exc:
+            logger.exception("translation of %s into %s failed", project.id, language)
+            return f"translation failed: {exc}"
+        path = out_dir / f"spk_{ordinal}.json"
+        path.write_text(json.dumps(translated, ensure_ascii=False), encoding="utf-8")
+        client.upload_file(
+            str(path),
+            settings.s3_bucket,
+            f"projects/{project.id}/translations/{language}/spk_{ordinal}.json",
+            ExtraArgs={"ContentType": "application/json; charset=utf-8"},
+        )
+        written += 1
+    if written == 0:
+        return "this recording has no captions to translate"
+    return None
+
+
+@celery_app.task(name="visiovox.translate_captions", bind=True, max_retries=0)
+def translate_captions(self: Any, translation_id: str) -> dict[str, Any]:
+    """Translate every speaker's captions of one project into one language."""
     with _Session() as session:
         row = session.get(Translation, translation_id)
         if row is None:
@@ -670,51 +717,13 @@ def translate_captions(self: Any, translation_id: str) -> dict[str, Any]:
             session.commit()
             return {"status": "failed", "translation_id": translation_id, "reason": reason}
 
-        target = BY_CODE.get(row.language)
-        if target is None:
-            return fail("this language is not offered")
-
-        base = Path(settings.media_root) / "projects" / project.id
-        out_dir = base / "translations" / row.language
-        out_dir.mkdir(parents=True, exist_ok=True)
-        speakers = [s for s in project.manifest.get("speakers", []) if isinstance(s, dict)]
-        client = _s3_client(settings)
-        written = 0
-        for speaker in speakers:
-            ordinal = speaker.get("ordinal")
-            source_file = base / f"spk_{ordinal}.json"
-            if not source_file.is_file():
-                # A speaker without captions has nothing to translate.
-                continue
-            body = json.loads(source_file.read_text(encoding="utf-8"))
-            source = SOURCE_FLORES.get(str(body.get("language")))
-            if source is None:
-                return fail(
-                    f"captions in '{body.get('language')}' cannot be translated by this model"
-                )
-            try:
-                translated = s8_translate.translate_transcript(
-                    body, source, target.nllb, target.code, _translator()
-                )
-            except Exception as exc:
-                logger.exception("translation %s failed", translation_id)
-                return fail(f"translation failed: {exc}")
-            path = out_dir / f"spk_{ordinal}.json"
-            path.write_text(json.dumps(translated, ensure_ascii=False), encoding="utf-8")
-            client.upload_file(
-                str(path),
-                settings.s3_bucket,
-                f"projects/{project.id}/translations/{row.language}/spk_{ordinal}.json",
-                ExtraArgs={"ContentType": "application/json; charset=utf-8"},
-            )
-            written += 1
-
-        if written == 0:
-            return fail("this recording has no captions to translate")
+        problem = _run_translation(project, row.language)
+        if problem is not None:
+            return fail(problem)
         row.status = "ready"
         row.finished_at = _now()
         session.commit()
-        return {"status": "ready", "translation_id": translation_id, "speakers": written}
+        return {"status": "ready", "translation_id": translation_id}
 
 
 # --------------------------------------------------------------------------
@@ -818,3 +827,277 @@ def summarize(self: Any, summary_id: str) -> dict[str, Any]:
         row.finished_at = _now()
         session.commit()
         return {"status": "ready", "summary_id": summary_id, "lines": len(lines)}
+
+
+# --------------------------------------------------------------------------
+# per-speaker dubbing (ADR-0024)
+# --------------------------------------------------------------------------
+
+TTS_RATE = 24_000
+
+
+def _decode(path: Path, rate: int) -> Any:
+    """Any audio file as mono float32 at `rate`."""
+    import subprocess
+
+    import numpy as np
+
+    proc = subprocess.run(  # noqa: S603
+        [  # noqa: S607 - ffmpeg from PATH, as every renderer here
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-ac",
+            "1",
+            "-ar",
+            str(rate),
+            "-f",
+            "f32le",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=1800,
+    )
+    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
+
+
+def _stretch(path: Path, tempo: float, rate: int) -> Any:
+    """A synthesised line resampled to `rate`, sped up by `tempo` (pitch kept)."""
+    import subprocess
+
+    import numpy as np
+
+    chain = f"atempo={tempo:.3f},aresample={rate}" if tempo > 1.0 else f"aresample={rate}"
+    proc = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-af",
+            chain,
+            "-ac",
+            "1",
+            "-f",
+            "f32le",
+            "-",
+        ],
+        check=True,
+        capture_output=True,
+        timeout=300,
+    )
+    return np.frombuffer(proc.stdout, dtype=np.float32).copy()
+
+
+def _speech_level(track: Any, rate: int) -> float:
+    """A speaker's loudness while speaking: the RMS of their louder frames."""
+    import numpy as np
+
+    frame = rate // 50
+    n = len(track) // frame
+    if n == 0:
+        return 0.05
+    rms = np.sqrt(
+        np.mean(np.square(track[: n * frame].reshape(n, frame), dtype=np.float64), axis=1)
+    )
+    active = rms[rms > 0.1 * float(rms.max())] if float(rms.max()) > 0 else rms
+    return float(np.percentile(active, 75)) if active.size else 0.05
+
+
+def _synthesise(lines: list[dict[str, Any]], work: Path) -> dict[str, Any]:
+    """Run the TTS runner in its own environment; its result file, parsed."""
+    import json
+    import os
+    import subprocess
+
+    python = Path(settings.tts_python).expanduser()
+    if not python.is_file():
+        raise RuntimeError(f"the dubbing voice model is not installed ({python})")
+    request = work / "tts-request.json"
+    result = work / "tts-result.json"
+    request.write_text(
+        json.dumps({"lines": lines, "out_dir": str(work / "tts")}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    env = {
+        k: v for k, v in os.environ.items() if k not in ("VIRTUAL_ENV", "PYTHONPATH", "PYTHONHOME")
+    }
+    # Weights are local; a job must never wait on the hub.
+    env["HF_HUB_OFFLINE"] = "1"
+    runner = Path(__file__).resolve().parents[2] / "tts" / "run_tts.py"
+    log_path = work / "tts.log"
+    with log_path.open("wb") as log:
+        proc = subprocess.run(  # noqa: S603 - our interpreter and script
+            [str(python), str(runner), "--request", str(request), "--result", str(result)],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=env,
+            timeout=settings.tts_timeout_seconds,
+            check=False,
+        )
+    if proc.returncode != 0 or not result.is_file():
+        tail = log_path.read_bytes()[-1500:].decode("utf-8", "replace")
+        raise RuntimeError(f"voice synthesis failed: {tail.strip()[-400:]}")
+    parsed: dict[str, Any] = json.loads(result.read_text(encoding="utf-8"))
+    return parsed
+
+
+@celery_app.task(name="visiovox.dub_project", bind=True, max_retries=0)
+def dub_project(self: Any, dub_id: str) -> dict[str, Any]:
+    """Dub every speaker of one project into one language, keeping the room."""
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+
+    import numpy as np
+    import soundfile as sf
+
+    from pipeline import s12_dub
+
+    with _Session() as session:
+        row = session.get(Dub, dub_id)
+        if row is None:
+            return {"status": "missing", "dub_id": dub_id}
+        project = session.get(Project, row.project_id)
+
+        def fail(reason: str) -> dict[str, Any]:
+            row.status = "failed"
+            row.error_detail = reason[:500]
+            row.finished_at = _now()
+            session.commit()
+            return {"status": "failed", "dub_id": dub_id, "reason": reason}
+
+        if project is None or project.manifest is None:
+            return fail("the recording is no longer available")
+        row.status = "running"
+        session.commit()
+        language = row.language
+        if language not in s12_dub.VOICES:
+            return fail("there are no voices for this language")
+
+        # 1. The translation, made now if it does not exist yet.
+        translation = session.scalar(
+            select(Translation).where(
+                Translation.project_id == project.id, Translation.language == language
+            )
+        )
+        if translation is None or translation.status != "ready":
+            problem = _run_translation(project, language)
+            if problem is not None:
+                return fail(problem)
+            if translation is None:
+                translation = Translation(
+                    project_id=project.id, user_id=row.user_id, language=language
+                )
+                session.add(translation)
+            translation.status = "ready"
+            translation.error_detail = None
+            translation.finished_at = _now()
+            session.commit()
+
+        base = Path(settings.media_root) / "projects" / project.id
+        folder = base / "translations" / language
+        ordinals = [
+            sp["ordinal"]
+            for sp in project.manifest.get("speakers", [])
+            if isinstance(sp, dict) and isinstance(sp.get("ordinal"), int)
+        ]
+        lines: list[s12_dub.Line] = []
+        for o in ordinals:
+            path = folder / f"spk_{o}.json"
+            if not path.is_file():
+                continue
+            for seg in json.loads(path.read_text(encoding="utf-8")).get("segments", []):
+                text = str(seg.get("text", "")).strip()
+                if text:
+                    lines.append(s12_dub.Line(o, int(seg["start_ms"]), int(seg["end_ms"]), text))
+        if not lines:
+            return fail("there is nothing to dub: no translated captions")
+        voices = s12_dub.assign_voices(language, sorted({ln.speaker for ln in lines}))
+
+        work_root = Path(settings.media_work_dir)
+        work_root.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix=f"dub-{row.id}-", dir=work_root))
+        try:
+            # 2. Every line spoken in its speaker's voice.
+            synth = _synthesise(
+                [
+                    {"id": i, "text": ln.text, "description": voices[ln.speaker].description}
+                    for i, ln in enumerate(lines)
+                ],
+                work,
+            )
+            by_id = {r["id"]: r for r in synth["lines"]}
+            durations = [
+                int(by_id[i]["duration_ms"]) if i in by_id else 0 for i in range(len(lines))
+            ]
+            placements = s12_dub.plan(lines, durations)
+
+            # 3. The room: the mixture without the dubbed voices.
+            mixture = _decode(base / "mixed.m4a", TTS_RATE)
+            tracks = [_decode(base / f"spk_{o}_f.m4a", TTS_RATE) for o in ordinals]
+            gains = s12_dub.track_gains(mixture, tracks)
+            dubbed = {ln.speaker for ln in lines}
+            keep = [i for i, o in enumerate(ordinals) if o in dubbed]
+            background = s12_dub.room(
+                mixture, [tracks[i] for i in keep], np.asarray([gains[i] for i in keep])
+            )
+            levels = {
+                o: _speech_level(gains[i] * tracks[i], TTS_RATE)
+                for i, o in enumerate(ordinals)
+                if o in dubbed
+            }
+
+            # 4. The new voices, placed and stretched to fit.
+            audio = {
+                i: _stretch(Path(by_id[i]["wav"]), p.tempo, TTS_RATE)
+                for i, p in enumerate(placements)
+                if i in by_id
+            }
+            soundtrack = s12_dub.assemble(background, placements, audio, levels, TTS_RATE)
+            wav = work / "dub.wav"
+            sf.write(wav, soundtrack, TTS_RATE)
+
+            # 5. Onto the picture.
+            out_dir = base / "dubs" / language
+            out_dir.mkdir(parents=True, exist_ok=True)
+            mp4 = out_dir / "dub.mp4"
+            proc = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                 "ffmpeg", "-v", "error", "-y", "-i", str(base / "video.mp4"), "-i", str(wav),
+                 "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+                 "-shortest", "-movflags", "+faststart", str(mp4)],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )  # fmt: skip
+            if proc.returncode != 0 or not mp4.is_file():
+                return fail(f"the dubbed video could not be made: {proc.stderr.strip()[:300]}")
+            _s3_client(settings).upload_file(
+                str(mp4),
+                settings.s3_bucket,
+                f"projects/{project.id}/dubs/{language}/dub.mp4",
+                ExtraArgs={"ContentType": "video/mp4"},
+            )
+        except Exception as exc:
+            logger.exception("dub %s failed", dub_id)
+            return fail(str(exc))
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+        row.stats = {
+            **s12_dub.fit_stats(placements),
+            "voices": {str(o): v.name for o, v in voices.items()},
+            "synthesis_s": round(float(synth.get("seconds", 0.0)), 1),
+            "speech_s": round(float(synth.get("speech_s", 0.0)), 1),
+        }
+        row.status = "ready"
+        row.finished_at = _now()
+        session.commit()
+        return {"status": "ready", "dub_id": dub_id, "lines": len(lines)}

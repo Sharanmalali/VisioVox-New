@@ -530,3 +530,54 @@ class Summary(Base):
             name="summaries_status_check",
         ),
     )
+
+
+class Dub(Base):
+    """A project dubbed into one language, every speaker in a voice of their
+    own, the room kept (ADR-0024). One per (project, language)."""
+
+    __tablename__ = "dubs"
+
+    id: Mapped[str] = _pk("dub")
+    project_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    # How the dub fits the original timing, and which voice each speaker got.
+    stats: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _now_col()
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("uq_dub_project_language", "project_id", "language", unique=True),
+        CheckConstraint(
+            _in_list("status", ("queued", "running", "ready", "failed")),
+            name="dubs_status_check",
+        ),
+    )
+
+
+class StudySession(Base):
+    """One participant's session in the user study (docs/user-study).
+
+    Recorded by the facilitator's account. No name, email or recording of the
+    participant: an anonymous code, per-task timings and answers, the
+    usability questionnaire, and a preference.
+    """
+
+    __tablename__ = "study_sessions"
+
+    id: Mapped[str] = _pk("sty")
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    participant: Mapped[str] = mapped_column(Text, nullable=False)
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[dt.datetime] = _now_col()
+
+    __table_args__ = (Index("uq_study_participant", "user_id", "participant", unique=True),)

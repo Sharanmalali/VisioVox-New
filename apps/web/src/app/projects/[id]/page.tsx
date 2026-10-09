@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import type { JobResponse, ProjectResponse } from '@visiovox/ts-client';
 
+import { DubPanel } from '@/components/DubPanel';
 import { ExportPanel } from '@/components/ExportPanel';
 import type { Clip } from '@/components/ExportPanel';
 import { InsightsPanel, insightBlocks, insightsFor } from '@/components/InsightsPanel';
@@ -344,6 +345,7 @@ export default function ProjectPage() {
                   below={(context) => (
                     <>
                       <SummaryPanel context={context} summary={summary} />
+                      <DubPanel projectId={projectId} nameOf={context.nameOf} />
                       <InsightsPanel context={context} durationMs={manifest.duration_ms} />
                     </>
                   )}

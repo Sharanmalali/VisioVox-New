@@ -19,6 +19,18 @@
         "title": "CompletedPart",
         "type": "object"
       },
+      "CreateDubRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "title": "Language",
+            "type": "string"
+          }
+        },
+        "required": ["language"],
+        "title": "CreateDubRequest",
+        "type": "object"
+      },
       "CreateExportRequest": {
         "additionalProperties": false,
         "description": "Ask for one rendered file.",
@@ -196,6 +208,76 @@
         },
         "required": ["language"],
         "title": "CreateTranslationRequest",
+        "type": "object"
+      },
+      "DubListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DubResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationLanguageOption"
+            },
+            "title": "Languages",
+            "type": "array"
+          }
+        },
+        "required": ["items", "languages"],
+        "title": "DubListResponse",
+        "type": "object"
+      },
+      "DubResponse": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "stats": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stats"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": ["language", "status", "error"],
+        "title": "DubResponse",
         "type": "object"
       },
       "ErrorResponse": {
@@ -865,6 +947,110 @@
           "created_at"
         ],
         "title": "ShareResponse",
+        "type": "object"
+      },
+      "StudySessionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "comments": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Comments",
+            "type": "string"
+          },
+          "order": {
+            "enum": ["visiovox-first", "baseline-first"],
+            "title": "Order",
+            "type": "string"
+          },
+          "participant": {
+            "pattern": "^[A-Za-z0-9_-]{1,16}$",
+            "title": "Participant",
+            "type": "string"
+          },
+          "preference": {
+            "enum": ["visiovox", "baseline", "no-preference"],
+            "title": "Preference",
+            "type": "string"
+          },
+          "sus": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 10,
+            "minItems": 10,
+            "title": "Sus",
+            "type": "array"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/StudyTaskResult"
+            },
+            "maxItems": 40,
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": ["participant", "order", "tasks", "sus", "preference"],
+        "title": "StudySessionRequest",
+        "type": "object"
+      },
+      "StudySessionResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "participant": {
+            "title": "Participant",
+            "type": "string"
+          }
+        },
+        "required": ["id", "participant", "created_at", "data"],
+        "title": "StudySessionResponse",
+        "type": "object"
+      },
+      "StudyTaskResult": {
+        "properties": {
+          "answer": {
+            "maxLength": 4000,
+            "title": "Answer",
+            "type": "string"
+          },
+          "condition": {
+            "enum": ["visiovox", "baseline"],
+            "title": "Condition",
+            "type": "string"
+          },
+          "recording": {
+            "maxLength": 60,
+            "title": "Recording",
+            "type": "string"
+          },
+          "seconds": {
+            "maximum": 3600.0,
+            "minimum": 0.0,
+            "title": "Seconds",
+            "type": "number"
+          },
+          "task": {
+            "maxLength": 60,
+            "title": "Task",
+            "type": "string"
+          }
+        },
+        "required": ["task", "condition", "recording", "seconds", "answer"],
+        "title": "StudyTaskResult",
         "type": "object"
       },
       "SummaryResponse": {
@@ -1788,6 +1974,136 @@
         },
         "summary": "Get Project",
         "tags": ["projects"]
+      }
+    },
+    "/v1/projects/{project_id}/dubs": {
+      "get": {
+        "operationId": "list_dubs_v1_projects__project_id__dubs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DubListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "List Dubs",
+        "tags": ["dubs"]
+      },
+      "post": {
+        "operationId": "request_dub_v1_projects__project_id__dubs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDubRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DubResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Request Dub",
+        "tags": ["dubs"]
       }
     },
     "/v1/projects/{project_id}/events": {
@@ -3361,6 +3677,116 @@
         },
         "summary": "Open Share",
         "tags": ["share"]
+      }
+    },
+    "/v1/study/sessions": {
+      "get": {
+        "operationId": "list_sessions_v1_study_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StudySessionResponse"
+                  },
+                  "title": "Response List Sessions V1 Study Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "List Sessions",
+        "tags": ["study"]
+      },
+      "post": {
+        "operationId": "save_session_v1_study_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudySessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudySessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Save Session",
+        "tags": ["study"]
       }
     }
   }

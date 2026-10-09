@@ -42,10 +42,12 @@ from .models import Job, JobStage, Project
 from .quotas import QuotaExceededError
 from .ratelimit import RateLimiter
 from .redis_client import close_redis, get_redis
+from .routes_dubs import router as dubs_router
 from .routes_exports import router as exports_router
 from .routes_media import limits_router
 from .routes_media import router as media_router
 from .routes_share import router as share_router
+from .routes_study import router as study_router
 from .routes_summaries import router as summaries_router
 from .routes_translations import router as translations_router
 from .schemas import (
@@ -386,3 +388,5 @@ app.include_router(exports_router)
 app.include_router(share_router)
 app.include_router(translations_router)
 app.include_router(summaries_router)
+app.include_router(dubs_router)
+app.include_router(study_router)

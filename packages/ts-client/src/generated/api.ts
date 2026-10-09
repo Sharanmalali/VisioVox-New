@@ -137,6 +137,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/dubs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Dubs */
+        get: operations["list_dubs_v1_projects__project_id__dubs_get"];
+        put?: never;
+        /** Request Dub */
+        post: operations["request_dub_v1_projects__project_id__dubs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/events": {
         parameters: {
             query?: never;
@@ -530,6 +548,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/study/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: operations["list_sessions_v1_study_sessions_get"];
+        put?: never;
+        /** Save Session */
+        post: operations["save_session_v1_study_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -540,6 +576,11 @@ export interface components {
             etag: string;
             /** Part Number */
             part_number: number;
+        };
+        /** CreateDubRequest */
+        CreateDubRequest: {
+            /** Language */
+            language: string;
         };
         /**
          * CreateExportRequest
@@ -601,6 +642,28 @@ export interface components {
         CreateTranslationRequest: {
             /** Language */
             language: string;
+        };
+        /** DubListResponse */
+        DubListResponse: {
+            /** Items */
+            items: components["schemas"]["DubResponse"][];
+            /** Languages */
+            languages: components["schemas"]["TranslationLanguageOption"][];
+        };
+        /** DubResponse */
+        DubResponse: {
+            /** Error */
+            error: string | null;
+            /** Language */
+            language: string;
+            /** Stats */
+            stats?: {
+                [key: string]: unknown;
+            } | null;
+            /** Status */
+            status: string;
+            /** Url */
+            url?: string | null;
         };
         /**
          * ErrorResponse
@@ -836,6 +899,62 @@ export interface components {
             speaker_ordinal: number | null;
             /** Token */
             token?: string | null;
+        };
+        /** StudySessionRequest */
+        StudySessionRequest: {
+            /**
+             * Comments
+             * @default
+             */
+            comments: string;
+            /**
+             * Order
+             * @enum {string}
+             */
+            order: "visiovox-first" | "baseline-first";
+            /** Participant */
+            participant: string;
+            /**
+             * Preference
+             * @enum {string}
+             */
+            preference: "visiovox" | "baseline" | "no-preference";
+            /** Sus */
+            sus: number[];
+            /** Tasks */
+            tasks: components["schemas"]["StudyTaskResult"][];
+        };
+        /** StudySessionResponse */
+        StudySessionResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Data */
+            data: {
+                [key: string]: unknown;
+            };
+            /** Id */
+            id: string;
+            /** Participant */
+            participant: string;
+        };
+        /** StudyTaskResult */
+        StudyTaskResult: {
+            /** Answer */
+            answer: string;
+            /**
+             * Condition
+             * @enum {string}
+             */
+            condition: "visiovox" | "baseline";
+            /** Recording */
+            recording: string;
+            /** Seconds */
+            seconds: number;
+            /** Task */
+            task: string;
         };
         /** SummaryResponse */
         SummaryResponse: {
@@ -1419,6 +1538,108 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_dubs_v1_projects__project_id__dubs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DubListResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    request_dub_v1_projects__project_id__dubs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateDubRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DubResponse"];
                 };
             };
             /** @description Unauthorized */
@@ -2589,6 +2810,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SharePublicResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    list_sessions_v1_study_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudySessionResponse"][];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    save_session_v1_study_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StudySessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StudySessionResponse"];
                 };
             };
             /** @description Unauthorized */

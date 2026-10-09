@@ -372,3 +372,63 @@ class ExportLinkResponse(BaseModel):
 
     url: str
     filename: str
+
+
+class CreateDubRequest(StrictModel):
+    language: str
+
+    @field_validator("language")
+    @classmethod
+    def _dub_language(cls, value: str) -> str:
+        from .translation_languages import DUB_LANGUAGES
+
+        if value not in DUB_LANGUAGES:
+            raise ValueError("there are no voices for this language")
+        return value
+
+
+class DubResponse(BaseModel):
+    language: str
+    status: str
+    error: str | None
+    stats: dict[str, Any] | None = None
+    # Signed video URL, once the status is "ready".
+    url: str | None = None
+
+
+class DubListResponse(BaseModel):
+    items: list[DubResponse]
+    languages: list[TranslationLanguageOption]
+
+
+class StudyTaskResult(BaseModel):
+    task: str = Field(max_length=60)
+    condition: Literal["visiovox", "baseline"]
+    recording: str = Field(max_length=60)
+    seconds: float = Field(ge=0, le=3600)
+    answer: str = Field(max_length=4000)
+
+
+class StudySessionRequest(StrictModel):
+    # An anonymous code (P01, P02, ...), never a name.
+    participant: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,16}$")]
+    order: Literal["visiovox-first", "baseline-first"]
+    tasks: list[StudyTaskResult] = Field(max_length=40)
+    # System Usability Scale, ten answers 1-5, for VisioVox.
+    sus: list[int] = Field(min_length=10, max_length=10)
+    preference: Literal["visiovox", "baseline", "no-preference"]
+    comments: str = Field(default="", max_length=4000)
+
+    @field_validator("sus")
+    @classmethod
+    def _likert(cls, value: list[int]) -> list[int]:
+        if any(v < 1 or v > 5 for v in value):
+            raise ValueError("SUS answers are 1 to 5")
+        return value
+
+
+class StudySessionResponse(BaseModel):
+    id: str
+    participant: str
+    created_at: dt.datetime
+    data: dict[str, Any]

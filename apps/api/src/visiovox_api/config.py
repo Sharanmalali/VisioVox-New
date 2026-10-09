@@ -117,6 +117,9 @@ class Settings(BaseSettings):
     speaker_embedder_dir: str = "~/models/ecapa"
     # NLLB-200, converted for CTranslate2 (ADR-0020).
     translation_model_dir: str = "~/models/nllb-200-distilled-1.3B-ct2"
+    # The dubbing voice model's own environment (ADR-0024).
+    tts_python: str = "~/venvs/tts/bin/python"
+    tts_timeout_seconds: int = 3600
     # pyannote diarization is gated; without a token S2a degrades to VAD only
     # and the pipeline falls back to single-speaker handling.
     hf_token: SecretStr = SecretStr("")

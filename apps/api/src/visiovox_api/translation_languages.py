@@ -104,5 +104,13 @@ SOURCE_FLORES: dict[str, str] = {
 }  # fmt: skip
 
 
+# Languages a recording can be dubbed into: translation targets that the voice
+# model (Indic Parler-TTS) has named voices for. Must equal the keys of
+# ml/pipeline/s12_dub.VOICES (tests/test_dub_api.py checks).
+DUB_LANGUAGES: tuple[str, ...] = (
+    "hi", "bn", "te", "mr", "ta", "gu", "kn", "or", "ml", "pa", "as", "ne", "sa", "mni", "en",
+)  # fmt: skip
+
+
 def is_target(code: str) -> bool:
     return code in BY_CODE

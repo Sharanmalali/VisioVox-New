@@ -38,6 +38,10 @@ export type TranslationListResponse = Schemas['TranslationListResponse'];
 export type TranslationLanguageOption = Schemas['TranslationLanguageOption'];
 export type SummaryResponse = Schemas['SummaryResponse'];
 export type ExportLinkResponse = Schemas['ExportLinkResponse'];
+export type DubResponse = Schemas['DubResponse'];
+export type DubListResponse = Schemas['DubListResponse'];
+export type StudySessionRequest = Schemas['StudySessionRequest'];
+export type StudySessionResponse = Schemas['StudySessionResponse'];
 
 export const CLIENT_VERSION = '0.1.0' as const;
 
@@ -184,6 +188,19 @@ export class VisioVoxClient {
     });
   }
 
+  /** Store one participant's user-study session (docs/user-study). */
+  saveStudySession(body: StudySessionRequest): Promise<StudySessionResponse> {
+    return this.request<StudySessionResponse>('/v1/study/sessions', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  /** Every session this facilitator has run, oldest first. */
+  listStudySessions(): Promise<StudySessionResponse[]> {
+    return this.request<StudySessionResponse[]>('/v1/study/sessions');
+  }
+
   // ---- upload ----
 
   /**
@@ -309,6 +326,21 @@ export class VisioVoxClient {
   requestSummary(projectId: string): Promise<SummaryResponse> {
     return this.request<SummaryResponse>(`/v1/projects/${projectId}/summary`, {
       method: 'POST',
+    });
+  }
+
+  // ---- dubbing ----
+
+  /** Every dub of a project, and the languages that have voices. */
+  listDubs(projectId: string): Promise<DubListResponse> {
+    return this.request<DubListResponse>(`/v1/projects/${projectId}/dubs`);
+  }
+
+  /** Dub every speaker into `language`; asking again for the same one is harmless. */
+  requestDub(projectId: string, language: string): Promise<DubResponse> {
+    return this.request<DubResponse>(`/v1/projects/${projectId}/dubs`, {
+      method: 'POST',
+      body: JSON.stringify({ language }),
     });
   }
 
