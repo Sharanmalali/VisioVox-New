@@ -301,7 +301,7 @@ def main() -> int:
             f" | dropped {out['dropped_ungrounded']}",
             flush=True,
         )
-        (OUT / "summary.json").write_text(json.dumps(rows, indent=1, default=str))
+        (OUT / "llm_summary.json").write_text(json.dumps(rows, indent=1, default=str))
 
     failed = [r for r in rows if "failed" in r]
     rows = [r for r in rows if "failed" not in r]

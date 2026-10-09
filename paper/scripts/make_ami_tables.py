@@ -214,5 +214,93 @@ numbers["gapfill"] = summary["gapfill"]
 numbers["gapfill_paired"] = summary["gapfill_paired"]
 numbers["visibility"] = vis
 numbers["av_mossformer2"] = av
+
+# ---- conversation insights (docs/29 section 9) --------------------------------
+ins = load("insights_summary")
+design = load("insights_design")
+INSIGHT_SYSTEMS = [
+    ("visiovox", "Caption words of the tracks"),
+    ("face_anchored", "\\textbf{Face-anchored diarization}"),
+    ("pyannote_oracle", "pyannote, oracle naming$^\\ast$"),
+]
+ins_lines = []
+for key, label in INSIGHT_SYSTEMS:
+    s = ins["systems"][key]
+    share = s["share_mae_pp"]
+    ins_lines.append(
+        f"{label} & {share[0]:.1f} {{\\scriptsize[{share[1]:.1f}, {share[2]:.1f}]}} & "
+        f"{s['overlap']['f1']:.2f} & {s['interruption']['f1']:.2f} \\\\"
+    )
+(OUT / "ami_insights.tex").write_text(
+    "\\begin{tabular}{@{}lccc@{}}\n\\toprule\n"
+    "& Talk share & Overlap & Interrupt. \\\\\n"
+    "System & MAE (pp) & F1 & F1 \\\\\n\\midrule\n"
+    + "\n".join(ins_lines)
+    + "\n\\bottomrule\n\\end{tabular}\n"
+)
+numbers["insights"] = ins
+numbers["insights_design"] = design
+
+# ---- summary and action items (docs/29 section 10) ----------------------------
+llm = [r for r in load("llm_summary") if "failed" not in r]
+llm_failed = len(load("llm_summary")) - len(llm)
+
+
+def prf(key: str) -> dict[str, float]:
+    tp = sum(r[key]["tp"] for r in llm)
+    hyp = sum(r[key]["hyp"] for r in llm)
+    ref = sum(r[key]["ref"] for r in llm)
+    p = tp / hyp if hyp else 0.0
+    rc = tp / ref if ref else 0.0
+    return {
+        "p": p,
+        "r": rc,
+        "f1": 2 * p * rc / (p + rc) if p + rc else 0.0,
+        "tp": tp,
+        "hyp": hyp,
+        "ref": ref,
+    }
+
+
+acts, decs = prf("actions"), prf("decisions")
+owner_checked = sum(r["owner"]["checked"] for r in llm)
+owner_right = sum(r["owner"]["right"] for r in llm)
+kept = sum(r["kept_items"] for r in llm)
+dropped = sum(r["dropped_ungrounded"] for r in llm)
+seconds = sorted(r["seconds"] for r in llm)
+summary_rows = [
+    ("Meetings summarised / failed", f"{len(llm)} / {llm_failed}"),
+    ("Items citing no real line (dropped)", f"{dropped} of {kept + dropped}"),
+    (
+        "Action items P / R / F1",
+        f"{acts['p']:.2f} / {acts['r']:.2f} / {acts['f1']:.2f}",
+    ),
+    ("\\quad written / annotated / matched", f"{acts['hyp']} / {acts['ref']} / {acts['tp']}"),
+    (
+        "Owner right (matched, role named)",
+        f"{owner_right} / {owner_checked} ({100 * owner_right / owner_checked:.0f}\\%)",
+    ),
+    ("Decisions P / R / F1", f"{decs['p']:.2f} / {decs['r']:.2f} / {decs['f1']:.2f}"),
+    ("\\quad written / annotated", f"{decs['hyp']} / {decs['ref']}"),
+    ("Median time per meeting", f"{seconds[len(seconds) // 2]:.1f}\\,s"),
+]
+(OUT / "ami_summary.tex").write_text(
+    "\\begin{tabular}{@{}lr@{}}\n\\toprule\nMeasure (30 meetings) & Value \\\\\n\\midrule\n"
+    + "\n".join(f"{a} & {b} \\\\" for a, b in summary_rows)
+    + "\n\\bottomrule\n\\end{tabular}\n"
+)
+numbers["llm_summary"] = {
+    "actions": acts,
+    "decisions": decs,
+    "owner": {"checked": owner_checked, "right": owner_right},
+    "dropped": dropped,
+    "kept": kept,
+    "failed": llm_failed,
+    "median_seconds": seconds[len(seconds) // 2],
+}
+
 (HERE / "data" / "ami-numbers.json").write_text(json.dumps(numbers, indent=1, default=float))
-print("tables written: ami_captions.tex, ami_av.tex; numbers in data/ami-numbers.json")
+print(
+    "tables written: ami_captions.tex, ami_av.tex, ami_insights.tex, ami_summary.tex; "
+    "numbers in data/ami-numbers.json"
+)
