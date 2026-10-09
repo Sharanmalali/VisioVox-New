@@ -12,6 +12,11 @@ Lines are generated in small batches, each with its own description (the
 voice), and cut back to their own length from the padded batch output. The
 model pads every line with 0.3-0.9 s of silence at each end, which would
 otherwise eat into the time the line has to fit; that is trimmed off.
+
+On very short prompts ("तो.", "So.") the model sometimes keeps talking -
+seconds of babble after the word. A line far longer than its text allows
+(`limit_ms`) is generated again with other seeds; if every try is too long,
+the shortest is cut at the limit (the word comes first, the babble after).
 """
 
 from __future__ import annotations
@@ -29,6 +34,37 @@ BATCH = 8
 # frame are silence; a little is kept either side so no consonant is clipped.
 SILENCE = 0.02
 MARGIN_S = 0.05
+
+
+# Duration guard: generously above real speech (~80-140 ms per character
+# measured on AMI lines), so only babble trips it.
+BASE_MS = 400
+PER_CHAR_MS = 200
+FLOOR_MS = 1000
+RETRY_SEEDS = (1, 2)
+FADE_S = 0.03
+
+
+def limit_ms(text: str) -> int:
+    """The longest a line of `text` may plausibly take to say."""
+    import unicodedata
+
+    chars = sum(1 for c in text if not unicodedata.category(c).startswith(("P", "Z", "S", "C")))
+    return max(FLOOR_MS, BASE_MS + PER_CHAR_MS * chars)
+
+
+def cut(wav: Any, rate: int, ms: int) -> Any:
+    """`wav` cut to `ms`, faded out so the cut does not click."""
+    import numpy as np
+
+    n = round(ms * rate / 1000)
+    if len(wav) <= n:
+        return wav
+    out = np.array(wav[:n], dtype=np.float32)
+    fade = min(len(out), round(FADE_S * rate))
+    if fade:
+        out[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+    return out
 
 
 def trim(wav: Any, rate: int) -> Any:
@@ -80,12 +116,7 @@ def main() -> int:
     rate = int(model.config.sampling_rate)
     log(f"model loaded in {time.time() - t0:.1f}s on {device}; {len(lines)} line(s)")
 
-    # The same request gives the same voices.
-    set_seed(0)
-    results = []
-    t1 = time.time()
-    for start in range(0, len(lines), BATCH):
-        batch = lines[start : start + BATCH]
+    def generate(batch: list[dict[str, Any]]) -> list[Any]:
         d = desc_tok([ln["description"] for ln in batch], return_tensors="pt", padding=True).to(
             device
         )
@@ -99,23 +130,78 @@ def main() -> int:
                 do_sample=True,
                 return_dict_in_generate=True,
             )
-        for k, ln in enumerate(batch):
+        out = []
+        for k in range(len(batch)):
             length = int(gen.audios_length[k]) if hasattr(gen, "audios_length") else None
             audio = gen.sequences[k, :length] if length else gen.sequences[k]
-            wav = trim(audio.to(torch.float32).cpu().numpy().reshape(-1), rate)
-            path = out_dir / f"line_{ln['id']}.wav"
-            sf.write(path, wav, rate)
-            results.append(
-                {"id": ln["id"], "wav": str(path), "duration_ms": round(len(wav) * 1000 / rate)}
-            )
+            out.append(trim(audio.to(torch.float32).cpu().numpy().reshape(-1), rate))
+        return out
+
+    def too_long(ln: dict[str, Any], wav: Any) -> bool:
+        return len(wav) * 1000 / rate > limit_ms(ln["text"])
+
+    # The same request gives the same voices.
+    set_seed(0)
+    t1 = time.time()
+    audio: dict[int, Any] = {}
+    for start in range(0, len(lines), BATCH):
+        batch = lines[start : start + BATCH]
+        for ln, wav in zip(batch, generate(batch), strict=True):
+            audio[ln["id"]] = wav
         log(f"{min(start + BATCH, len(lines))}/{len(lines)} lines")
+
+    # Babble: try again with other seeds, keep the first that fits, else cut.
+    by_id = {ln["id"]: ln for ln in lines}
+    flagged = [i for i in audio if too_long(by_id[i], audio[i])]
+    retried, cut_lines = len(flagged), 0
+    for seed in RETRY_SEEDS:
+        if not flagged:
+            break
+        set_seed(seed)
+        still = []
+        for start in range(0, len(flagged), BATCH):
+            ids = flagged[start : start + BATCH]
+            for i, wav in zip(ids, generate([by_id[i] for i in ids]), strict=True):
+                if not too_long(by_id[i], wav):
+                    audio[i] = wav
+                elif len(wav) < len(audio[i]):
+                    audio[i] = wav
+                    still.append(i)
+                else:
+                    still.append(i)
+        flagged = still
+    for i in flagged:
+        audio[i] = cut(audio[i], rate, limit_ms(by_id[i]["text"]))
+        cut_lines += 1
+    if retried:
+        log(f"{retried} line(s) ran long; {retried - cut_lines} regenerated, {cut_lines} cut")
+
+    results = []
+    for ln in lines:
+        path = out_dir / f"line_{ln['id']}.wav"
+        sf.write(path, audio[ln["id"]], rate)
+        results.append(
+            {
+                "id": ln["id"],
+                "wav": str(path),
+                "duration_ms": round(len(audio[ln["id"]]) * 1000 / rate),
+            }
+        )
 
     spoken = sum(r["duration_ms"] for r in results) / 1000
     took = time.time() - t1
     log(f"synthesised {spoken:.1f}s of speech in {took:.1f}s")
     Path(args.result).write_text(
         json.dumps(
-            {"sample_rate": rate, "lines": results, "seconds": took, "speech_s": spoken}, indent=1
+            {
+                "sample_rate": rate,
+                "lines": results,
+                "seconds": took,
+                "speech_s": spoken,
+                "retried": retried,
+                "cut": cut_lines,
+            },
+            indent=1,
         ),
         encoding="utf-8",
     )
