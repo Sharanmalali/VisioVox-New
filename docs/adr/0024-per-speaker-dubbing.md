@@ -74,6 +74,30 @@ were sped up, or ran over.
 - **Whisper large-v3 round trip** of those 3 lines: the transcripts match the
   input text up to punctuation and one spelling variant (हफ्ते / हफ़ते).
 
+### Fitting the lines in time (revised after the first end-to-end run)
+
+The first live dub was test_video2: two stand-up comedians, about
+3.5 words/s, 15 lines. Only 13 % of lines fitted as spoken, and 73 % **ran
+over**. An overrun line played over the same speaker's next line, so one
+voice spoke twice at once. Measured causes and fixes (same 15 lines):
+
+| Change | Lines on time | Note |
+| --- | --- | --- |
+| First version (moderate pace, untrimmed, overlap self) | 27 % unpushed | median overrun 1.16 s |
+| Trim each line's silent edges (TTS pads 0.3–0.9 s per side) | | median overrun 0.63 s |
+| Ask for a *fast* pace | | median overrun 0.25 s; Whisper CER 0.07–0.10, against 0.13 at moderate |
+| **Never overlap yourself**: an overrun pushes the speaker's next line later; pauses absorb the lag | 60 % | 40 % start late (median 3.4 s, max 4.7 s) on this monologue |
+
+- **Trimming is safe.** On the same audio, Whisper CER was 0.133 untrimmed and
+  0.118 trimmed.
+- **Why this clip lags.** It is a worst case: a continuous monologue, and Hindi
+  runs about 1.4× longer than the English even at a fast pace. Lag is made up
+  only where the speaker pauses.
+- **What the panel shows.** It states the share of late lines and the largest
+  lag.
+- **Not done.** Condensing the translation to fit was left out on purpose. It
+  would change what people said.
+
 ## Consequences
 
 - One more 3.6 GB model on disk (`~/.cache/huggingface`), gated on Hugging

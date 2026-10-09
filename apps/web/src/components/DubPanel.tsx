@@ -22,6 +22,10 @@ function percent(x: unknown): string {
   return typeof x === 'number' ? `${String(Math.round(x * 100))}%` : '—';
 }
 
+function seconds(ms: unknown): string {
+  return typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '—';
+}
+
 export function DubPanel({
   projectId,
   nameOf,
@@ -193,8 +197,11 @@ export function DubPanel({
               ))}
             </dl>
             <p className="text-fg-secondary">
-              {percent(stats?.['as_is'])} of lines fit as spoken, {percent(stats?.['sped_up'])} were
-              sped up to fit, {percent(stats?.['overrun'])} ran over.
+              {percent(stats?.['as_is'])} of lines fit as spoken and {percent(stats?.['sped_up'])}{' '}
+              were sped up to fit.{' '}
+              {typeof stats?.['late'] === 'number' && stats['late'] > 0
+                ? `${percent(stats['late'])} start a little late (at most ${seconds(stats['max_lag_ms'])}) so that no one talks over themselves.`
+                : 'Every line starts on time.'}
             </p>
             <a
               href={current.url}

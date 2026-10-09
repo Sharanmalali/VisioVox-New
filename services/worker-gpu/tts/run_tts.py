@@ -9,7 +9,9 @@ file:
     result:  {"sample_rate": 44100, "lines": [{"id": 0, "wav": "...", "duration_ms": 1830}]}
 
 Lines are generated in small batches, each with its own description (the
-voice), and cut back to their own length from the padded batch output.
+voice), and cut back to their own length from the padded batch output. The
+model pads every line with 0.3-0.9 s of silence at each end, which would
+otherwise eat into the time the line has to fit; that is trimmed off.
 """
 
 from __future__ import annotations
@@ -19,9 +21,32 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 MODEL = "ai4bharat/indic-parler-tts"
 BATCH = 8
+# Edge trimming: 10 ms frames quieter than this fraction of the line's loudest
+# frame are silence; a little is kept either side so no consonant is clipped.
+SILENCE = 0.02
+MARGIN_S = 0.05
+
+
+def trim(wav: Any, rate: int) -> Any:
+    """`wav` without its leading and trailing silence."""
+    import numpy as np
+
+    frame = max(1, rate // 100)
+    n = len(wav) // frame
+    if n == 0:
+        return wav
+    rms = np.sqrt(np.mean(np.square(wav[: n * frame].reshape(n, frame)), axis=1))
+    loud = np.flatnonzero(rms > SILENCE * float(rms.max()))
+    if loud.size == 0:
+        return wav
+    margin = round(MARGIN_S * rate)
+    start = max(0, int(loud[0]) * frame - margin)
+    end = min(len(wav), (int(loud[-1]) + 1) * frame + margin)
+    return wav[start:end]
 
 
 def log(message: str) -> None:
@@ -77,7 +102,7 @@ def main() -> int:
         for k, ln in enumerate(batch):
             length = int(gen.audios_length[k]) if hasattr(gen, "audios_length") else None
             audio = gen.sequences[k, :length] if length else gen.sequences[k]
-            wav = audio.to(torch.float32).cpu().numpy().reshape(-1)
+            wav = trim(audio.to(torch.float32).cpu().numpy().reshape(-1), rate)
             path = out_dir / f"line_{ln['id']}.wav"
             sf.write(path, wav, rate)
             results.append(

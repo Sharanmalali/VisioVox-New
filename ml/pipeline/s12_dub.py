@@ -12,7 +12,7 @@ so the scale each had inside the mixture, `g_k`, is recovered by least
 squares rather than assumed. Each translated caption segment is spoken by a
 text-to-speech voice of its own per speaker and placed at the segment's start;
 a line that runs longer than its slot is sped up, at most MAX_TEMPO, and
-beyond that allowed to overrun (counted, never hidden).
+beyond that pushes the speaker's next line later (counted, never hidden).
 
 Pure numpy here; synthesis runs in its own environment
 (services/worker-gpu/tts/run_tts.py) and time-stretching in ffmpeg.
@@ -71,7 +71,7 @@ def assign_voices(language: str, ordinals: Sequence[int]) -> dict[int, Voice]:
         out[ordinal] = Voice(
             name=name,
             description=(
-                f"{name} speaks at a moderate pace{tone}, in a close-sounding recording "
+                f"{name} speaks at a fast pace{tone}, in a close-sounding recording "
                 "with very clear audio and very little background noise."
             ),
         )
@@ -90,9 +90,10 @@ class Line:
 class Placement:
     line: Line
     tempo: float  # 1.0 = as synthesised
-    start_ms: int
+    start_ms: int  # may be later than the line's own start: see lag_ms
     end_ms: int  # after tempo
-    overrun_ms: int  # beyond the slot it was given
+    overrun_ms: int  # beyond the slot it was given, pushed onto the next line
+    lag_ms: int = 0  # how late it starts, waiting for the speaker's previous line
 
 
 def plan(lines: Sequence[Line], durations_ms: Sequence[int]) -> list[Placement]:
@@ -100,10 +101,14 @@ def plan(lines: Sequence[Line], durations_ms: Sequence[int]) -> list[Placement]:
 
     A line's slot runs from its own start to just before the same speaker's
     next line (or, for their last line, its own end plus the gap): a speaker
-    may talk over someone else, as they did, but never over themselves.
+    may talk over someone else, as they did, but never over themselves. A line
+    longer than its slot is sped up, at most MAX_TEMPO; one still too long
+    pushes the speaker's next line later, and the lag is made up in the next
+    pause - starting late is better than one voice speaking twice at once.
     """
     order = sorted(range(len(lines)), key=lambda i: (lines[i].speaker, lines[i].start_ms))
     out: list[Placement | None] = [None] * len(lines)
+    cursor: dict[int, int] = {}  # per speaker: when their previous line (plus gap) ends
     for pos, i in enumerate(order):
         line = lines[i]
         nxt = order[pos + 1] if pos + 1 < len(order) else None
@@ -111,34 +116,47 @@ def plan(lines: Sequence[Line], durations_ms: Sequence[int]) -> list[Placement]:
         slot_end = (
             lines[nxt].start_ms - GAP_MS if same_next and nxt is not None else line.end_ms + GAP_MS
         )
-        slot = max(1, slot_end - line.start_ms)
+        start = max(line.start_ms, cursor.get(line.speaker, line.start_ms))
+        slot = max(1, slot_end - start)
         dur = max(1, int(durations_ms[i]))
         tempo = min(MAX_TEMPO, dur / slot) if dur > slot else 1.0
-        length = round(dur / tempo)
+        end = start + round(dur / tempo)
+        cursor[line.speaker] = end + GAP_MS
         out[i] = Placement(
             line=line,
             tempo=round(tempo, 3),
-            start_ms=line.start_ms,
-            end_ms=line.start_ms + length,
-            overrun_ms=max(0, line.start_ms + length - slot_end),
+            start_ms=start,
+            end_ms=end,
+            overrun_ms=max(0, end - slot_end),
+            lag_ms=start - line.start_ms,
         )
     return [p for p in out if p is not None]
+
+
+# Starting this much late or less is not noticeable as "late".
+LATE_MS = 300
 
 
 def fit_stats(placements: Sequence[Placement]) -> dict[str, float]:
     """How well the dub fits the original timing."""
     n = len(placements)
     if n == 0:
-        return {"lines": 0, "as_is": 0.0, "sped_up": 0.0, "overrun": 0.0, "mean_tempo": 1.0}
+        return {
+            "lines": 0, "as_is": 0.0, "sped_up": 0.0, "overrun": 0.0, "late": 0.0,
+            "mean_tempo": 1.0, "median_lag_ms": 0.0, "max_lag_ms": 0.0,
+        }  # fmt: skip
     sped = [p for p in placements if p.tempo > 1.0]
     over = [p for p in placements if p.overrun_ms > 0]
+    late = [p for p in placements if p.lag_ms > LATE_MS]
     return {
         "lines": n,
         "as_is": (n - len(sped)) / n,
         "sped_up": len(sped) / n,
         "overrun": len(over) / n,
+        "late": len(late) / n,
         "mean_tempo": float(np.mean([p.tempo for p in placements])),
-        "median_overrun_ms": float(np.median([p.overrun_ms for p in over])) if over else 0.0,
+        "median_lag_ms": float(np.median([p.lag_ms for p in late])) if late else 0.0,
+        "max_lag_ms": float(max(p.lag_ms for p in placements)),
     }
 
 

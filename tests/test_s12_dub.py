@@ -7,6 +7,7 @@ import pytest
 
 from pipeline.s12_dub import (
     GAP_MS,
+    LATE_MS,
     MAX_TEMPO,
     VOICES,
     Line,
@@ -62,8 +63,27 @@ def test_a_line_too_long_to_fit_overruns_and_says_so() -> None:
     assert p.tempo == MAX_TEMPO
     assert p.overrun_ms > 0
     stats = fit_stats(plan(LINES, [slot * 2, 1000, 1800]))
-    assert stats["overrun"] == pytest.approx(1 / 3)
-    assert stats["as_is"] == pytest.approx(2 / 3)
+    # The pushed-back second line has less time left, so it is sped up too.
+    assert stats["overrun"] == pytest.approx(2 / 3)
+    assert stats["as_is"] == pytest.approx(1 / 3)
+
+
+def test_an_overrun_delays_the_speaker_s_next_line_instead_of_overlapping_it() -> None:
+    slot = 2500 - GAP_MS
+    first, second, _ = plan(LINES, [slot * 2, 1000, 1800])
+    assert second.start_ms == first.end_ms + GAP_MS
+    assert second.lag_ms == second.start_ms - 2500 > LATE_MS
+    stats = fit_stats([first, second])
+    assert stats["late"] == pytest.approx(1 / 2)
+    assert stats["max_lag_ms"] == second.lag_ms
+
+
+def test_lag_is_made_up_in_a_pause() -> None:
+    lines = [Line(1, 0, 1000, "a"), Line(1, 1200, 2000, "b"), Line(1, 9000, 9500, "c")]
+    _, b, c = plan(lines, [2000, 2000, 500])
+    assert b.lag_ms > 0  # pushed by a
+    assert c.lag_ms == 0  # the pause before c absorbs it
+    assert c.start_ms == 9000
 
 
 def test_speakers_may_overlap_each_other_as_they_did() -> None:
