@@ -245,7 +245,13 @@ def main() -> int:
             out, seconds = cached["output"], cached["seconds"]
         else:
             t0 = time.time()
-            out = summarise(lines, names, HOST)
+            try:
+                out = summarise(lines, names, HOST)
+            except RuntimeError as exc:
+                # A failure is a result: counted, not fatal to the run.
+                print(f"{meeting}: FAILED ({exc})", flush=True)
+                rows.append({"meeting": meeting, "split": split, "failed": str(exc)})
+                continue
             seconds = time.time() - t0
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps({"output": out, "seconds": seconds}))
@@ -297,6 +303,9 @@ def main() -> int:
         )
         (OUT / "summary.json").write_text(json.dumps(rows, indent=1, default=str))
 
+    failed = [r for r in rows if "failed" in r]
+    rows = [r for r in rows if "failed" not in r]
+
     def prf(key: str) -> str:
         tp = sum(r[key]["tp"] for r in rows)
         hyp = sum(r[key]["hyp"] for r in rows)
@@ -310,7 +319,7 @@ def main() -> int:
     right = sum(r["owner"]["right"] for r in rows)
     kept = sum(r["kept_items"] for r in rows)
     dropped = sum(r["dropped_ungrounded"] for r in rows)
-    print(f"\n{len(rows)} meetings")
+    print(f"\n{len(rows)} meetings summarised, {len(failed)} failed")
     print("actions   ", prf("actions"))
     print("decisions ", prf("decisions"))
     print(f"owner right on matched actions naming a role: {right}/{checked}")

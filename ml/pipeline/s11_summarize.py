@@ -31,6 +31,8 @@ MODEL = "qwen2.5:7b-instruct"
 # cited items kept as they are: a 7B model's attention degrades well before
 # its context limit.
 CHUNK_LINES = 220
+# A chunk the model cannot answer is halved until this size.
+MIN_SPLIT_LINES = 30
 TIMEOUT_S = 600
 CITATION = re.compile(r"L(\d+)")
 
@@ -67,33 +69,39 @@ def _clock(ms: int) -> str:
     return f"{s // 3600}:{s % 3600 // 60:02d}:{s % 60:02d}"
 
 
-_CITED = {
-    "type": "array",
-    "items": {
-        "type": "object",
-        "properties": {
-            "text": {"type": "string"},
-            "lines": {"type": "array", "items": {"type": "string"}},
+# Bounded lists keep the answer short enough to finish: the schema is
+# enforced while the model writes, so it cannot list forever.
+_LINES = {"type": "array", "items": {"type": "string"}, "maxItems": 6}
+
+
+def _cited(most: int) -> dict[str, Any]:
+    return {
+        "type": "array",
+        "maxItems": most,
+        "items": {
+            "type": "object",
+            "properties": {"text": {"type": "string"}, "lines": _LINES},
+            "required": ["text", "lines"],
         },
-        "required": ["text", "lines"],
-    },
-}
+    }
+
 
 SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "overview": _CITED,
-        "key_points": _CITED,
-        "decisions": _CITED,
+        "overview": _cited(3),
+        "key_points": _cited(8),
+        "decisions": _cited(8),
         "action_items": {
             "type": "array",
+            "maxItems": 12,
             "items": {
                 "type": "object",
                 "properties": {
                     "owner": {"type": ["string", "null"]},
                     "task": {"type": "string"},
                     "due": {"type": ["string", "null"]},
-                    "lines": {"type": "array", "items": {"type": "string"}},
+                    "lines": _LINES,
                 },
                 "required": ["owner", "task", "due", "lines"],
             },
@@ -236,14 +244,22 @@ def summarise(
     speakers = {ln.speaker for ln in lines} | set(names)
     roster = ", ".join(f"S{o} = {n}" for o, n in sorted(names.items()))
     chunks = [lines[i : i + CHUNK_LINES] for i in range(0, len(lines), CHUNK_LINES)]
-    parts = [
-        grounded(
-            _chat(host, SYSTEM, f"Speakers: {roster}\n\nTranscript:\n{_render(c, names)}", model),
-            valid,
-            speakers,
-        )
-        for c in chunks
-    ]
+
+    def part(chunk: Sequence[Line]) -> list[dict[str, Any]]:
+        """One chunk's grounded summary - or, if the model cannot finish an
+        answer for it, its two halves' (down to MIN_SPLIT_LINES)."""
+        try:
+            raw = _chat(
+                host, SYSTEM, f"Speakers: {roster}\n\nTranscript:\n{_render(chunk, names)}", model
+            )
+        except RuntimeError:
+            if len(chunk) < 2 * MIN_SPLIT_LINES:
+                raise
+            half = len(chunk) // 2
+            return part(chunk[:half]) + part(chunk[half:])
+        return [grounded(raw, valid, speakers)]
+
+    parts = [p for c in chunks for p in part(c)]
     result: dict[str, Any] = {
         # A long meeting's overview is each part's first sentence, in order,
         # so every sentence still points at its evidence.
