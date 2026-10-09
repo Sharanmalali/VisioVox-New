@@ -41,6 +41,10 @@ logging.basicConfig(
 log = logging.getLogger("av_tse").info
 
 
+# Face positions are kept for every BOX_STEP-th frame (25 fps / 6 = ~4 per second).
+BOX_STEP = 6
+
+
 def _ffmpeg(threads: int, *args: str) -> None:
     # List-form arguments, unlike ClearVoice's shell strings, so a path is
     # never re-parsed. Inputs are the worker's own S0 re-encode, not raw uploads.
@@ -188,6 +192,21 @@ def main() -> int:
         dets = crop["proc_track"]
         wav = paths["pycropPath"] / f"est_{i}.wav"
         sf.write(wav, np.asarray(est, dtype=np.float32).reshape(-1), 16000)
+        # Where the face is, every BOX_STEP frames: [frame, centre x, centre y,
+        # half-width, half-height], as fractions of the frame. The player draws
+        # these to make faces clickable; four per second follows a talking head
+        # closely enough and keeps an hour-long track to a few hundred kB.
+        xs, ys, ss = (np.asarray(dets[k], dtype=np.float64) for k in ("x", "y", "s"))
+        boxes = [
+            [
+                int(frame_idx[j]),
+                round(float(xs[j]) / width, 4),
+                round(float(ys[j]) / height, 4),
+                round(float(ss[j]) / width, 4),
+                round(float(ss[j]) / height, 4),
+            ]
+            for j in range(0, len(frame_idx), BOX_STEP)
+        ]
         described.append(
             {
                 "index": i,
@@ -196,6 +215,7 @@ def main() -> int:
                 "center_x": float(np.mean(dets["x"]) / width),
                 "center_y": float(np.mean(dets["y"]) / height),
                 "face_size": float(np.mean(dets["s"]) * 2 / max(width, height)),
+                "boxes": boxes,
                 "wav": str(wav),
             }
         )

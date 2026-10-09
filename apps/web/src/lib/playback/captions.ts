@@ -13,6 +13,9 @@
  */
 
 /** One word, as `ml/pipeline/s7_transcribe.py` serialises it. */
+import type { FaceBox } from './faces';
+import { parseFaces } from './faces';
+
 export interface CaptionWord {
   readonly text: string;
   readonly start_ms: number;
@@ -37,6 +40,8 @@ export interface Transcript {
    * processed before it shipped; the insights then fall back to word timings.
    */
   readonly activity?: readonly (readonly [number, number])[];
+  /** Where this person's face is over time (lib/playback/faces.ts). */
+  readonly faces?: readonly FaceBox[];
 }
 
 /**
@@ -50,13 +55,16 @@ export interface Transcript {
 export interface CaptionIndex {
   readonly segments: readonly CaptionSegment[];
   readonly activity?: readonly (readonly [number, number])[];
+  readonly faces?: readonly FaceBox[];
 }
 
 export function buildCaptionIndex(transcript: Transcript): CaptionIndex {
   const segments = [...transcript.segments].sort((a, b) => a.start_ms - b.start_ms);
-  return transcript.activity === undefined
-    ? { segments }
-    : { segments, activity: transcript.activity };
+  return {
+    segments,
+    ...(transcript.activity === undefined ? {} : { activity: transcript.activity }),
+    ...(transcript.faces === undefined ? {} : { faces: transcript.faces }),
+  };
 }
 
 export const EMPTY_CAPTION_INDEX: CaptionIndex = { segments: [] };
@@ -139,12 +147,17 @@ export function parseTranscript(body: unknown): Transcript | null {
   const language = record['language'];
   const languageProbability = record['language_probability'];
   const activity = parseActivity(record['activity']);
+  const faces = parseFaces(record['faces']);
   const parsed: Transcript = {
     language: typeof language === 'string' ? language : 'unknown',
     language_probability: typeof languageProbability === 'number' ? languageProbability : 0,
     segments,
   };
-  return activity === null ? parsed : { ...parsed, activity };
+  return {
+    ...parsed,
+    ...(activity === null ? {} : { activity }),
+    ...(faces === null ? {} : { faces }),
+  };
 }
 
 /** `{ intervals: [[start_ms, end_ms], ...] }`, or null if absent or malformed. */

@@ -134,3 +134,42 @@ def test_an_audio_clip_renders_at_the_asked_length(tmp_path: Path) -> None:
 
 def test_speaker_palette_is_rgb_hex() -> None:
     assert all(len(c) == 6 for c in s10_captions.SPEAKER_RGB)
+
+
+def test_mix_keys_parse_back_to_levels() -> None:
+    from worker_gpu.tasks import _mix_levels
+
+    assert _mix_levels("0:0,1:100,2:30") == {0: 0.0, 1: 1.0, 2: 0.3}
+
+
+@needs_ffmpeg
+def test_a_mix_sums_the_voices_at_their_levels_without_clipping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import numpy as np
+    import soundfile as sf
+
+    from worker_gpu import tasks
+
+    tones = {}
+    for ordinal, freq in ((1, 300), (2, 700)):
+        wav = tmp_path / f"t{ordinal}.wav"
+        t = np.arange(16_000 * 2) / 16_000
+        sf.write(wav, 0.9 * np.sin(2 * np.pi * freq * t).astype(np.float32), 16_000)
+        tones[ordinal] = wav
+    monkeypatch.setattr(tasks, "_speaker_audio_path", lambda _project, ordinal: tones[ordinal])
+
+    class Row:
+        id = "exp_test"
+        mix = "0:0,1:100,2:150"
+
+    out = tasks._render_mix(object(), Row(), tmp_path)  # type: ignore[arg-type]
+    decoded = tmp_path / "decoded.wav"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(out), "-ar", "16000", "-ac", "1", str(decoded)],
+        check=True,
+    )
+    audio, _ = sf.read(decoded)
+    assert abs(len(audio) / 16_000 - 2.0) < 0.1
+    # Two loud tones summed would reach ~2.25; the limiter keeps it below 1.
+    assert float(np.max(np.abs(audio))) <= 1.0

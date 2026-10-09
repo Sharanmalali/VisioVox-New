@@ -224,6 +224,9 @@ class CreateExportRequest(StrictModel):
     end_ms: int | None = Field(default=None, ge=1)
     # Burned-in captions: "original", or the code of a ready translation.
     captions: str | None = Field(default=None, max_length=16)
+    # A listener's own mix: speaker ordinal ("0" = original mix) -> level
+    # 0..2. Replaces speaker_ordinal.
+    mix: dict[str, float] | None = None
 
 
 class ExportResponse(BaseModel):
@@ -235,6 +238,7 @@ class ExportResponse(BaseModel):
     start_ms: int | None = None
     end_ms: int | None = None
     captions: str | None = None
+    mix: str | None = None
     status: str
     size_bytes: int | None
     expires_at: dt.datetime | None

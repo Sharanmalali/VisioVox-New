@@ -77,6 +77,8 @@ export default function ProjectPage() {
   // The stretch to download, set from the Export panel or from transcript
   // lines: a line's clip button sets it, and on a later line stretches it.
   const [clip, setClip] = useState<Clip | null>(null);
+  // The listener's mix from the player's mixer, offered as a download.
+  const [mix, setMix] = useState<Readonly<Record<string, number>> | null>(null);
   const clipLine = useCallback((line: TranscriptLine) => {
     setClip((current) =>
       current === null
@@ -313,6 +315,7 @@ export default function ProjectPage() {
                   manifest={manifest}
                   names={project.speaker_names ?? {}}
                   translated={translation.texts}
+                  onMixChange={setMix}
                   aside={(context) => (
                     <TranscriptPanel
                       context={context}
@@ -360,6 +363,7 @@ export default function ProjectPage() {
                   clip={clip}
                   onClipChange={setClip}
                   captionOptions={captionOptions}
+                  mix={mix}
                 />
                 <SharePanel
                   projectId={projectId}

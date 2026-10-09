@@ -220,3 +220,59 @@ async def test_only_the_owner_sees_a_summary(
     stranger = as_user()
     response = await client.get(f"/v1/projects/{project_id}/summary", headers=stranger)
     assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------
+# a listener's own mix (ADR-0023)
+# --------------------------------------------------------------------------
+
+
+async def test_a_mix_is_one_export_however_its_levels_are_written(
+    client: AsyncClient, as_user: SignIn, queued: list[str]
+) -> None:
+    headers = as_user()
+    project_id = await _project(client, headers)
+    url = f"/v1/projects/{project_id}/exports"
+    body = {"kind": "audio", "mix": {"1": 1.0, "2": 0.3, "0": 0.0}}
+
+    first = await client.post(url, json=body, headers=headers)
+    assert first.status_code == 202, first.text
+    assert first.json()["mix"] == "0:0,1:100,2:30"
+    same = await client.post(
+        url, json={"kind": "audio", "mix": {"2": 0.301, "1": 1, "0": 0}}, headers=headers
+    )
+    assert same.json()["id"] == first.json()["id"]
+    assert len(queued) == 1
+
+
+@pytest.mark.parametrize(
+    "mix",
+    [
+        {"1": 2.5},  # louder than allowed
+        {"7": 1.0},  # nobody of that number
+        {"x": 1.0},
+        {"1": 0.0, "2": 0.0},  # silence
+    ],
+)
+async def test_impossible_mixes_are_refused(
+    client: AsyncClient, as_user: SignIn, queued: list[str], mix: dict[str, float]
+) -> None:
+    headers = as_user()
+    project_id = await _project(client, headers)
+    response = await client.post(
+        f"/v1/projects/{project_id}/exports", json={"kind": "audio", "mix": mix}, headers=headers
+    )
+    assert response.status_code == 400, response.text
+
+
+async def test_a_mix_and_a_speaker_cannot_both_be_asked_for(
+    client: AsyncClient, as_user: SignIn, queued: list[str]
+) -> None:
+    headers = as_user()
+    project_id = await _project(client, headers)
+    response = await client.post(
+        f"/v1/projects/{project_id}/exports",
+        json={"kind": "audio", "speaker_ordinal": 1, "mix": {"1": 1.0}},
+        headers=headers,
+    )
+    assert response.status_code == 400

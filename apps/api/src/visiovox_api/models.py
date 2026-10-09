@@ -379,6 +379,9 @@ class Export(Base):
     # Captions burned into the picture: None, "original", or a language code
     # of a ready translation.
     captions: Mapped[str | None] = mapped_column(Text)
+    # A listener's own mix (ADR-0023): "ordinal:percent" pairs, sorted, e.g.
+    # "0:0,1:100,2:30" (0 = the original mix). None for a single speaker.
+    mix: Mapped[str | None] = mapped_column(Text)
 
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     storage_key: Mapped[str | None] = mapped_column(Text)
@@ -399,6 +402,7 @@ class Export(Base):
             "start_ms",
             "end_ms",
             "captions",
+            "mix",
             unique=True,
             postgresql_nulls_not_distinct=True,
         ),

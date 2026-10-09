@@ -384,6 +384,54 @@ def _speaker_audio_path(project: Project, ordinal: int | None) -> Path:
     return base / f"spk_{ordinal}_f.m4a"
 
 
+def _mix_levels(mix: str) -> dict[int, float]:
+    """ "0:0,1:100,2:30" -> {0: 0.0, 1: 1.0, 2: 0.3}."""
+    out: dict[int, float] = {}
+    for part in mix.split(","):
+        key, _, value = part.partition(":")
+        out[int(key)] = int(value) / 100
+    return out
+
+
+def _render_mix(project: Project, row: Export, work: Path) -> Path:
+    """The listener's mix as one audio file: each separated voice (and the
+    original mix, ordinal 0) at its level, summed, then limited so a mix with
+    several voices turned up cannot clip."""
+    import subprocess
+
+    from pipeline import s10_render
+
+    assert row.mix is not None
+    inputs: list[tuple[Path, float]] = []
+    for ordinal, level in _mix_levels(row.mix).items():
+        if level <= 0:
+            continue
+        path = _speaker_audio_path(project, None if ordinal == 0 else ordinal)
+        if not path.is_file():
+            raise ValueError(f"track {ordinal} is no longer available")
+        inputs.append((path, level))
+    if not inputs:
+        raise ValueError("every voice in this mix is off")
+    out = work / f"{row.id}-mix.m4a"
+    argv = ["ffmpeg", "-v", "error", "-y", "-protocol_whitelist", "file"]
+    for path, _ in inputs:
+        argv += ["-i", str(path)]
+    chains = [f"[{i}:a]volume={level:.2f}[a{i}]" for i, (_, level) in enumerate(inputs)]
+    joined = "".join(f"[a{i}]" for i in range(len(inputs)))
+    graph = ";".join(
+        [
+            *chains,
+            f"{joined}amix=inputs={len(inputs)}:normalize=0:dropout_transition=0,"
+            "alimiter=limit=0.95[out]",
+        ]
+    )
+    argv += ["-filter_complex", graph, "-map", "[out]", "-c:a", "aac", "-b:a", "192k", str(out)]
+    proc = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=1800)  # noqa: S603
+    if proc.returncode != 0 or not out.is_file():
+        raise s10_render.RenderError(f"mix failed: {proc.stderr.strip()[:300]}")
+    return out
+
+
 def _burned_captions(project: Project, row: Export, work: Path) -> Path | None:
     """An .ass file of this export's captions, or None when it has none.
 
@@ -404,7 +452,11 @@ def _burned_captions(project: Project, row: Export, work: Path) -> Path | None:
         for sp in project.manifest.get("speakers", [])
         if isinstance(sp, dict) and isinstance(sp.get("ordinal"), int)
     ]
-    wanted = ordinals if row.speaker_ordinal is None else [row.speaker_ordinal]
+    if row.mix is not None:
+        # The voices that are audible in the mix.
+        wanted = [o for o, level in _mix_levels(row.mix).items() if o != 0 and level > 0]
+    else:
+        wanted = ordinals if row.speaker_ordinal is None else [row.speaker_ordinal]
     captions = {
         o: json.loads((folder / f"spk_{o}.json").read_text(encoding="utf-8"))
         for o in wanted
@@ -456,14 +508,23 @@ def render_export(self: Any, export_id: str) -> dict[str, Any]:
         out_dir = Path(settings.media_root) / "exports" / project.id
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        audio = _speaker_audio_path(project, row.speaker_ordinal)
+        mixed_audio: Path | None = None
+        if row.mix is not None:
+            try:
+                mixed_audio = _render_mix(project, row, work)
+            except (s10_render.RenderError, OSError, ValueError) as exc:
+                return fail(f"the mix could not be made: {exc}")
+            audio = mixed_audio
+        else:
+            audio = _speaker_audio_path(project, row.speaker_ordinal)
         if not audio.is_file():
             return fail("the isolated track for this speaker is no longer available")
 
         suffix = "m4a" if row.kind == "audio" else "mp4"
+        mixed = f"-mix-{row.mix.replace(':', '_').replace(',', '-')}" if row.mix else ""
         clip = f"-{row.start_ms}-{row.end_ms}" if row.start_ms is not None else ""
         captions = f"-cc-{row.captions}" if row.captions else ""
-        name = f"{row.speaker_ordinal or 'all'}-{row.quality or row.kind}{clip}{captions}.{suffix}"
+        name = f"{row.speaker_ordinal or 'all'}-{row.quality or row.kind}{clip}{captions}{mixed}.{suffix}"
         destination = out_dir / name
         subtitles: Path | None = None
 
@@ -514,6 +575,8 @@ def render_export(self: Any, export_id: str) -> dict[str, Any]:
         finally:
             if subtitles is not None:
                 subtitles.unlink(missing_ok=True)
+            if mixed_audio is not None:
+                mixed_audio.unlink(missing_ok=True)
 
         # Into the object store, which is what the download link signs. (The
         # file used to stay on local disk, under a key the store never had.)

@@ -1025,3 +1025,148 @@ th {
   margin-top: 0.35rem;
   font-size: 0.85rem;
 }
+
+/* ----------------------------------------------------------- click a face
+   A region per face on screen. Invisible until pointed at (the picture is the
+   point), a ring and the name when hovered or focused, and a steady ring on the
+   person being listened to. */
+
+.face-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.face-target {
+  position: absolute;
+  pointer-events: auto;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.face-target:hover,
+.face-target:focus-visible {
+  border-color: rgb(255 255 255 / 0.85);
+  box-shadow: 0 0 0 4px rgb(0 0 0 / 0.25);
+  outline: none;
+}
+
+.face-target-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.face-tag {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.7);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.face-target:hover .face-tag,
+.face-target:focus-visible .face-tag,
+.face-target-on .face-tag {
+  opacity: 1;
+}
+
+.face-target-on .face-tag {
+  background: var(--accent);
+  color: var(--fg-on-accent);
+}
+
+/* ------------------------------------------------------------------ mixer */
+
+.mix-toggle {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  font-size: 0.85rem;
+  font-weight: 550;
+}
+
+.mix-toggle:hover:not(:disabled) {
+  background: var(--bg-inset);
+}
+
+.mix-toggle-on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.mixer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.75rem 0.9rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.mixer-row {
+  display: grid;
+  grid-template-columns: minmax(7rem, 11rem) minmax(0, 1fr) 3.2rem auto;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.mixer-name {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mixer-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+
+.mixer-value {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--fg-secondary);
+  text-align: right;
+}
+
+.mixer-solo {
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.mixer-solo:hover {
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .face-target,
+  .face-tag {
+    transition: none;
+  }
+}

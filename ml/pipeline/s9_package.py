@@ -65,6 +65,9 @@ class SpeakerTrack:
     # When this person was speaking, from face-anchored diarization
     # (pipeline.diarize), as (start_ms, end_ms). None when it did not run.
     activity: list[tuple[int, int]] | None = None
+    # Where this person's face is: [ms, cx, cy, half_w, half_h], fractions of
+    # the frame. Lets the player make faces clickable. None without video.
+    faces: list[list[float]] | None = None
     natural: np.ndarray | None = None
 
 
@@ -237,6 +240,7 @@ def package(
                             if track.activity is not None
                             else {}
                         ),
+                        **({"faces": {"boxes": track.faces}} if track.faces else {}),
                     },
                     indent=2,
                 ),

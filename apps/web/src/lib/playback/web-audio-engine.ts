@@ -55,6 +55,8 @@ export class WebAudioSyncEngine implements PlaybackEngine {
 
   private anchor: Anchor | null = null;
   private activeId: TrackId | null = null;
+  /** Levels per track while mixing; null when one track is selected. */
+  private mix: Map<TrackId, number> | null = null;
   private rate = 1;
   private raf = 0;
   private lastDrift = 0;
@@ -223,7 +225,7 @@ export class WebAudioSyncEngine implements PlaybackEngine {
     const gain = ctx.createGain();
     src.buffer = buffer;
     src.playbackRate.value = this.rate;
-    gain.gain.value = id === this.activeId ? 1 : 0;
+    gain.gain.value = this.gainFor(id);
     src.connect(gain).connect(master);
     src.start(startAt ?? ctx.currentTime, Math.max(0, atMediaTime));
     this.voices.set(id, { src, gain });
@@ -246,9 +248,40 @@ export class WebAudioSyncEngine implements PlaybackEngine {
 
   // -------------------------------------------------------------- switching
 
+  private gainFor(id: TrackId): number {
+    if (this.mix !== null) return this.mix.get(id) ?? 0;
+    return id === this.activeId ? 1 : 0;
+  }
+
+  /** Glide every voice to its level - short enough to feel immediate. */
+  private applyGains(): void {
+    const ctx = this.ctx;
+    if (ctx === null) return;
+    const now = ctx.currentTime;
+    for (const [id, { gain }] of this.voices) {
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value, now);
+      gain.gain.setTargetAtTime(this.gainFor(id), now, 0.03);
+    }
+  }
+
+  setMix(levels: ReadonlyMap<TrackId, number> | null): void {
+    this.mix = levels === null ? null : new Map([...levels].map(([k, v]) => [k, clamp(v, 0, 2)]));
+    this.applyGains();
+  }
+
   selectTrack(trackId: TrackId): Promise<void> {
     const ctx = this.ctx;
-    if (ctx === null || trackId === this.activeId) return Promise.resolve();
+    if (ctx === null) return Promise.resolve();
+    if (this.mix !== null) {
+      // Choosing one person ends the mix: everyone else glides out.
+      this.mix = null;
+      this.activeId = trackId;
+      this.applyGains();
+      this.emitter.emit('trackchange', trackId);
+      return Promise.resolve();
+    }
+    if (trackId === this.activeId) return Promise.resolve();
 
     const from = this.activeId === null ? undefined : this.voices.get(this.activeId);
     const to = this.voices.get(trackId);

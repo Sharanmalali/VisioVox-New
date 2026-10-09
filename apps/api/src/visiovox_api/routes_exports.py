@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -35,6 +36,7 @@ from .schemas import (
     ExportResponse,
     RenditionOption,
 )
+from .speakers import speaker_ordinals
 from .storage import ObjectStore
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,7 @@ def _response(row: Export) -> ExportResponse:
         start_ms=row.start_ms,
         end_ms=row.end_ms,
         captions=row.captions,
+        mix=row.mix,
         status=row.status,
         size_bytes=row.size_bytes,
         expires_at=row.expires_at,
@@ -118,6 +121,7 @@ async def create_export(
             )
 
     _check_clip(body.start_ms, body.end_ms, project.duration_ms)
+    mix = _mix_key(body.mix, body.speaker_ordinal, project.manifest)
     await _check_captions(body.captions, body.kind, project.id, session)
 
     # Asking twice returns the same artifact rather than re-encoding it.
@@ -130,6 +134,7 @@ async def create_export(
             Export.start_ms.is_not_distinct_from(body.start_ms),
             Export.end_ms.is_not_distinct_from(body.end_ms),
             Export.captions.is_not_distinct_from(body.captions),
+            Export.mix.is_not_distinct_from(mix),
         )
     )
     if existing is not None and existing.status in {"queued", "running", "ready"}:
@@ -144,6 +149,7 @@ async def create_export(
         start_ms=body.start_ms,
         end_ms=body.end_ms,
         captions=body.captions,
+        mix=mix,
     )
     row.status = "queued"
     row.error_detail = None
@@ -219,8 +225,42 @@ async def _check_captions(
         )
 
 
+def _mix_key(
+    mix: dict[str, float] | None, speaker_ordinal: int | None, manifest: dict[str, Any] | None
+) -> str | None:
+    """A mix as its canonical key, "0:0,1:100,2:30" - or None for no mix.
+
+    Levels are rounded to whole percent so the same mix asked twice is the
+    same export; every ordinal must be a speaker (or 0, the original mix),
+    and something must be audible.
+    """
+    if mix is None:
+        return None
+    if speaker_ordinal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Export either one speaker or a mix, not both.",
+        )
+    allowed = speaker_ordinals(manifest) | {0}
+    levels: dict[int, int] = {}
+    for key, level in mix.items():
+        if not key.isdigit() or int(key) not in allowed or not 0 <= level <= 2:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A mix gives each speaker a level from 0 to 2.",
+            )
+        levels[int(key)] = round(level * 100)
+    if not any(levels.values()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Every voice in this mix is off."
+        )
+    return ",".join(f"{k}:{v}" for k, v in sorted(levels.items()))
+
+
 def _filename(project_title: str, row: Export) -> str:
     name = project_title[:60] or "visiovox"
+    if row.mix is not None:
+        name += "-my-mix"
     if row.speaker_ordinal is not None:
         name += f"-speaker-{row.speaker_ordinal}"
     if row.start_ms is not None and row.end_ms is not None:

@@ -53,6 +53,20 @@
             "title": "Kind",
             "type": "string"
           },
+          "mix": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mix"
+          },
           "quality": {
             "anyOf": [
               {
@@ -278,6 +292,17 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "mix": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mix"
           },
           "project_id": {
             "title": "Project Id",

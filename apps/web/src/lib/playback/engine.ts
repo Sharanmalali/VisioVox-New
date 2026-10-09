@@ -35,6 +35,12 @@ export interface PlaybackEngine {
   /** Must resolve within 120 ms (NFR-PERF-03). */
   selectTrack(trackId: TrackId): Promise<void>;
   setVolume(volume: number): void;
+  /**
+   * Hear several tracks at once at the given levels (0 silent, 1 as recorded,
+   * up to 2), or `null` to go back to one selected track. Optional: only the
+   * WebAudio engine can mix; under HLS one element carries one rendition.
+   */
+  setMix?(levels: ReadonlyMap<TrackId, number> | null): void;
   /** Manual A/V correction for device latency, in ms. docs/12 §3.6. */
   setOffsetMs(offsetMs: number): void;
   getOffsetMs(): number;

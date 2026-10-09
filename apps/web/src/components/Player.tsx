@@ -32,6 +32,8 @@ import { HlsSyncEngine } from '@/lib/playback/hls-engine';
 import { MAX_AV_OFFSET_MS, resolveEngine } from '@/lib/playback/sync';
 import type { TranscriptLine } from '@/lib/playback/transcript';
 import { mergeTranscript } from '@/lib/playback/transcript';
+import type { FaceBox } from '@/lib/playback/faces';
+import { boxAt, contentRect, faceRect } from '@/lib/playback/faces';
 
 /** What a side panel (the transcript) can read from and do to the player. */
 export interface PlayerAsideContext {
@@ -81,6 +83,11 @@ interface PlayerProps {
    * The caption box then shows the translation with the original under it.
    */
   readonly translated?: ReadonlyMap<string, string> | null;
+  /**
+   * The listener's own mix, by speaker ordinal ("1" -> 0.3), or null when one
+   * track is selected. Lets the page offer "export this mix".
+   */
+  readonly onMixChange?: (mix: Readonly<Record<string, number>> | null) => void;
 }
 
 export function Player({
@@ -90,6 +97,7 @@ export function Player({
   aside,
   below,
   translated,
+  onMixChange,
 }: PlayerProps): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
@@ -104,6 +112,8 @@ export function Player({
   const [engineState, setEngineState] = useState<EngineState>('idle');
   const [captions, setCaptions] = useState<Record<string, CaptionIndex>>({});
   const [captionsReady, setCaptionsReady] = useState(false);
+  // Levels per track while mixing (TrackId -> 0..2); null when one is selected.
+  const [mix, setMix] = useState<Record<TrackId, number> | null>(null);
 
   const engineKind = useMemo(
     () => forceEngine ?? resolveEngine(manifest, typeof AudioContext !== 'undefined'),
@@ -202,10 +212,58 @@ export function Player({
 
   // -------------------------------------------------------------- interaction
 
-  const select = useCallback((id: TrackId): void => {
-    setActiveId(id);
-    void engineRef.current?.selectTrack(id);
-  }, []);
+  const select = useCallback(
+    (id: TrackId): void => {
+      setActiveId(id);
+      // Choosing one person ends a mix; the engine glides the others out.
+      setMix(null);
+      onMixChange?.(null);
+      void engineRef.current?.selectTrack(id);
+    },
+    [onMixChange],
+  );
+
+  const reportMix = useCallback(
+    (levels: Record<TrackId, number> | null) => {
+      if (onMixChange === undefined) return;
+      if (levels === null) {
+        onMixChange(null);
+        return;
+      }
+      // Ordinal 0 is the original mix - the room - as the export API names it.
+      const byOrdinal: Record<string, number> = { '0': levels[MIXED_TRACK] ?? 0 };
+      for (const sp of manifest.speakers) byOrdinal[String(sp.ordinal)] = levels[sp.id] ?? 0;
+      onMixChange(byOrdinal);
+    },
+    [manifest, onMixChange],
+  );
+
+  const applyMix = useCallback(
+    (levels: Record<TrackId, number> | null) => {
+      setMix(levels);
+      reportMix(levels);
+      engineRef.current?.setMix?.(levels === null ? null : new Map(Object.entries(levels)));
+      if (levels === null) void engineRef.current?.selectTrack(activeId);
+    },
+    [activeId, reportMix],
+  );
+
+  const openMixer = useCallback(() => {
+    // Start from "everyone, cleaned up": every separated voice as recorded.
+    const levels: Record<TrackId, number> = { [MIXED_TRACK]: 0 };
+    for (const sp of manifest.speakers) if (sp.extraction_ok) levels[sp.id] = 1;
+    applyMix(levels);
+  }, [manifest, applyMix]);
+
+  // Faces from the caption files: who can be clicked, and where.
+  const faces = useMemo(() => {
+    const out = new Map<TrackId, readonly FaceBox[]>();
+    for (const sp of manifest.speakers) {
+      const boxes = captions[sp.id]?.faces;
+      if (boxes !== undefined && boxes.length > 0 && sp.extraction_ok) out.set(sp.id, boxes);
+    }
+    return out;
+  }, [manifest, captions]);
 
   const seekToMs = useCallback((ms: number): void => {
     const video = videoRef.current;
@@ -282,6 +340,16 @@ export function Player({
             <p className="muted">Audio only — no video track in this recording.</p>
           </div>
         )}
+        {faces.size > 0 && ready && (
+          <FaceLayer
+            videoRef={videoRef}
+            faces={faces}
+            mediaMs={mediaMs}
+            activeId={mix === null ? activeId : null}
+            nameOf={(id) => nameOf(manifest.speakers.find((sp) => sp.id === id)?.ordinal ?? 0)}
+            onSelect={select}
+          />
+        )}
       </div>
 
       {error !== null && <p className="error">{error}</p>}
@@ -294,11 +362,21 @@ export function Player({
 
       <SpeakerRail
         speakers={manifest.speakers}
-        activeId={activeId}
+        activeId={mix === null ? activeId : ''}
         ready={ready}
         onSelect={select}
         nameOf={nameOf}
       />
+
+      {mix !== null && (
+        <Mixer
+          speakers={manifest.speakers}
+          levels={mix}
+          nameOf={nameOf}
+          onChange={applyMix}
+          onSolo={select}
+        />
+      )}
 
       <CaptionView
         segment={segment}
@@ -310,6 +388,20 @@ export function Player({
       />
 
       <div className="player-controls row">
+        {engineKind === 'webaudio' && manifest.speakers.length > 1 && (
+          <button
+            type="button"
+            className={'mix-toggle' + (mix !== null ? ' mix-toggle-on' : '')}
+            aria-pressed={mix !== null}
+            disabled={!ready}
+            onClick={() => {
+              if (mix === null) openMixer();
+              else applyMix(null);
+            }}
+          >
+            {mix === null ? 'Mix voices' : 'Done mixing'}
+          </button>
+        )}
         {naturalAvailable && (
           <div className="seg" role="group" aria-label="Audio mode">
             <button
@@ -525,5 +617,158 @@ function CaptionView({
         </button>
       ))}
     </p>
+  );
+}
+
+// ------------------------------------------------------------------- faces --
+
+/**
+ * Click a face to hear that person (ADR-0023). Regions follow each face as
+ * S5 tracked it; the selected person's face carries a ring and their name.
+ * Pointer events reach the regions only, so the video's own controls work.
+ */
+function FaceLayer({
+  videoRef,
+  faces,
+  mediaMs,
+  activeId,
+  nameOf,
+  onSelect,
+}: {
+  videoRef: React.RefObject<HTMLVideoElement | null>;
+  faces: ReadonlyMap<TrackId, readonly FaceBox[]>;
+  mediaMs: number;
+  activeId: TrackId | null;
+  nameOf: (id: TrackId) => string;
+  onSelect: (id: TrackId) => void;
+}) {
+  const [size, setSize] = useState({ w: 0, h: 0, vw: 0, vh: 0 });
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video === null) return;
+    const measure = () => {
+      setSize({
+        w: video.clientWidth,
+        h: video.clientHeight,
+        vw: video.videoWidth,
+        vh: video.videoHeight,
+      });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(video);
+    video.addEventListener('loadedmetadata', measure);
+    return () => {
+      observer.disconnect();
+      video.removeEventListener('loadedmetadata', measure);
+    };
+  }, [videoRef]);
+
+  // The native control bar sits along the bottom; faces there stay unclickable
+  // rather than stealing the play button.
+  const controlsBand = 48;
+  const picture = contentRect(size.w, size.h, size.vw, size.vh);
+  const visible = [...faces]
+    .map(([id, boxes]) => ({ id, box: boxAt(boxes, mediaMs) }))
+    .filter((f): f is { id: TrackId; box: FaceBox } => f.box !== null);
+
+  return (
+    <div className="face-layer" aria-label="Faces - click one to hear that person">
+      {visible.map(({ id, box }) => {
+        const r = faceRect(box, picture);
+        const top = Math.max(0, r.y);
+        const height = Math.min(r.height, size.h - controlsBand - top);
+        if (height <= 8) return null;
+        const on = id === activeId;
+        return (
+          <button
+            key={id}
+            type="button"
+            className={'face-target' + (on ? ' face-target-on' : '')}
+            style={{ left: r.x, top, width: r.width, height }}
+            aria-pressed={on}
+            aria-label={`Listen to ${nameOf(id)}`}
+            title={`Listen to ${nameOf(id)}`}
+            onClick={() => {
+              onSelect(id);
+            }}
+          >
+            <span className="face-tag">{on ? `Listening: ${nameOf(id)}` : nameOf(id)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------- mixer --
+
+/**
+ * Everyone at once, each at their own level: turn down the one who
+ * interrupts, bring up the quiet one. 0-200 %, where 100 % is as recorded.
+ */
+function Mixer({
+  speakers,
+  levels,
+  nameOf,
+  onChange,
+  onSolo,
+}: {
+  speakers: readonly Speaker[];
+  levels: Readonly<Record<TrackId, number>>;
+  nameOf: (ordinal: number) => string;
+  onChange: (levels: Record<TrackId, number>) => void;
+  onSolo: (id: TrackId) => void;
+}) {
+  const rows: { id: TrackId; label: string; slot: number | null }[] = [
+    ...speakers
+      .filter((sp) => sp.extraction_ok)
+      .map((sp) => ({ id: sp.id, label: nameOf(sp.ordinal), slot: ((sp.ordinal - 1) % 4) + 1 })),
+    { id: MIXED_TRACK, label: 'Original mix (room)', slot: null },
+  ];
+  return (
+    <div className="mixer" role="group" aria-label="Voice mixer">
+      {rows.map((row) => {
+        const value = Math.round((levels[row.id] ?? 0) * 100);
+        return (
+          <div key={row.id} className="mixer-row">
+            <span className="mixer-name">
+              <span
+                className="mixer-dot"
+                style={{
+                  background:
+                    row.slot === null ? 'var(--spk-mixed)' : `var(--spk-${String(row.slot)})`,
+                }}
+              />
+              {row.label}
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={200}
+              step={5}
+              value={value}
+              aria-label={`${row.label} level`}
+              onChange={(e) => {
+                onChange({ ...levels, [row.id]: Number(e.target.value) / 100 });
+              }}
+            />
+            <output className="mixer-value">{value === 0 ? 'off' : `${String(value)}%`}</output>
+            {row.id !== MIXED_TRACK && (
+              <button
+                type="button"
+                className="mixer-solo"
+                onClick={() => {
+                  onSolo(row.id);
+                }}
+              >
+                Only
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }

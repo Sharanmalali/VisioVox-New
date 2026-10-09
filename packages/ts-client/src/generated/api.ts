@@ -556,6 +556,10 @@ export interface components {
              * @enum {string}
              */
             kind: "video" | "audio";
+            /** Mix */
+            mix?: {
+                [key: string]: number;
+            } | null;
             /** Quality */
             quality?: string | null;
             /** Speaker Ordinal */
@@ -640,6 +644,8 @@ export interface components {
             id: string;
             /** Kind */
             kind: string;
+            /** Mix */
+            mix?: string | null;
             /** Project Id */
             project_id: string;
             /** Quality */

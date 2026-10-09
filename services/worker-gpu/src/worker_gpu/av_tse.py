@@ -82,6 +82,8 @@ class FaceTrack:
     end: int  # sample, exclusive
     center_x: float  # 0 = left edge of the frame, 1 = right
     audio: np.ndarray  # full recording length, zero outside [start, end)
+    # [frame, cx, cy, half_w, half_h] as fractions of the frame (run_av_tse.py).
+    boxes: list[list[float]] = field(default_factory=list)
 
 
 @dataclass
@@ -103,6 +105,15 @@ class Speaker:
         spans = np.array([t.end - t.start for t in self.tracks], dtype=np.float64)
         xs = np.array([t.center_x for t in self.tracks], dtype=np.float64)
         return float(np.average(xs, weights=spans))
+
+    def face_boxes(self) -> list[list[float]]:
+        """Where this person's face is over time: [ms, cx, cy, half_w, half_h].
+
+        Every merged track's boxes, in time order, on the video's timeline
+        (frame f is at f / FPS seconds - the player shows S0's 25 fps video).
+        """
+        rows = sorted((b for t in self.tracks for b in t.boxes), key=lambda b: b[0])
+        return [[round(b[0] * 1000 / FPS), *b[1:5]] for b in rows if len(b) >= 5]
 
     def coverage(self, n_samples: int) -> float:
         """Fraction of the recording where this person's face was tracked.
@@ -240,7 +251,12 @@ def place_tracks(
         audio[lo:hi] = est[lo - start : hi - start]
         placed.append(
             FaceTrack(
-                index=int(t["index"]), start=lo, end=hi, center_x=float(t["center_x"]), audio=audio
+                index=int(t["index"]),
+                start=lo,
+                end=hi,
+                center_x=float(t["center_x"]),
+                audio=audio,
+                boxes=[list(map(float, b)) for b in t.get("boxes", [])],
             )
         )
     return placed, lag

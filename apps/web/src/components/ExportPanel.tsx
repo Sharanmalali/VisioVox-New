@@ -44,6 +44,8 @@ interface Props {
   onClipChange: (clip: Clip | null) => void;
   /** Languages captions can be burned in: "original" and ready translations. */
   captionOptions: { code: string; label: string }[];
+  /** The listener's mix from the player's mixer (ordinal -> level), if any. */
+  mix?: Readonly<Record<string, number>> | null;
 }
 
 /** "1:05" or "65" -> ms; null when unreadable. */
@@ -67,10 +69,19 @@ export function ExportPanel({
   clip,
   onClipChange,
   captionOptions,
+  mix = null,
 }: Props) {
   const [options, setOptions] = useState<RenditionOption[]>([]);
   const [exports, setExports] = useState<ExportResponse[]>([]);
+  // A speaker's ordinal, or 0 for "your mix".
   const [speaker, setSpeaker] = useState<number>(speakers[0]?.ordinal ?? 1);
+  const usingMix = speaker === 0 && mix !== null;
+
+  // Opening the mixer offers its mix here; closing it falls back to a speaker.
+  useEffect(() => {
+    if (mix !== null) setSpeaker(0);
+    else setSpeaker((s) => (s === 0 ? (speakers[0]?.ordinal ?? 1) : s));
+  }, [mix, speakers]);
   const [quality, setQuality] = useState<string>('');
   const [captions, setCaptions] = useState<string>('none');
   const [busy, setBusy] = useState(false);
@@ -148,7 +159,8 @@ export function ExportPanel({
       const kind = isAudio ? 'audio' : 'video';
       await api().createExport(projectId, {
         kind,
-        speaker_ordinal: speaker,
+        speaker_ordinal: usingMix ? null : speaker,
+        mix: usingMix ? { ...mix } : null,
         quality: kind === 'audio' ? null : quality,
         start_ms: clip?.start_ms ?? null,
         end_ms: clip?.end_ms ?? null,
@@ -219,8 +231,10 @@ export function ExportPanel({
 
   function describe(row: ExportResponse): string {
     const who =
-      speakers.find((s) => s.ordinal === row.speaker_ordinal)?.label ??
-      (row.speaker_ordinal ? `Speaker ${String(row.speaker_ordinal)}` : 'Everyone');
+      row.mix != null
+        ? 'Your mix'
+        : (speakers.find((s) => s.ordinal === row.speaker_ordinal)?.label ??
+          (row.speaker_ordinal ? `Speaker ${String(row.speaker_ordinal)}` : 'Everyone'));
     const part =
       row.start_ms != null && row.end_ms != null
         ? ` · ${readableTime(row.start_ms)}–${readableTime(row.end_ms)}`
@@ -251,6 +265,7 @@ export function ExportPanel({
               setSpeaker(Number(e.target.value));
             }}
           >
+            {mix !== null && <option value={0}>Your mix (from the mixer)</option>}
             {speakers.map((s) => (
               <option key={s.ordinal} value={s.ordinal}>
                 {s.label}

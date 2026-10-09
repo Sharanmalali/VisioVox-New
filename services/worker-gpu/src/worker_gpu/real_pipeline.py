@@ -299,6 +299,7 @@ def run_pipeline(
                     # were off screen is not recovered at all.
                     mean_confidence=person.coverage(len(audio)),
                     extraction_ok=True,
+                    faces=person.face_boxes(),
                 )
             )
         overlap = overlap_ratio([t.faithful for t in tracks])
