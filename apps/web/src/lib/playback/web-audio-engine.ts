@@ -27,6 +27,7 @@ import {
   driftMs,
   rateTrim,
 } from './sync';
+import { decodeFailureMessage, decodeWithRetry } from './decode';
 
 interface Voice {
   readonly src: AudioBufferSourceNode;
@@ -105,7 +106,9 @@ export class WebAudioSyncEngine implements PlaybackEngine {
 
     const rest = this.tracks.filter((t) => t.id !== first.id);
     await this.decode(first);
-    void Promise.allSettled(rest.map((t) => this.decode(t)));
+    // The rest one at a time, not all at once: Safari fails decodes under
+    // that load ("Decoding failed" on a nine-track project).
+    void this.decodeInTurn(rest);
 
     this.setState('ready');
   }
@@ -121,22 +124,39 @@ export class WebAudioSyncEngine implements PlaybackEngine {
     return this.destroyed;
   }
 
+  private async decodeInTurn(tracks: readonly Track[]): Promise<void> {
+    for (const track of tracks) {
+      if (this.isDestroyed()) return;
+      await this.decode(track);
+    }
+  }
+
   private async decode(track: Track): Promise<void> {
     const ctx = this.ctx;
     if (ctx === null || this.isDestroyed()) return;
+    let bytes: ArrayBuffer;
     try {
       const response = await this.fetchImpl(track.url);
       if (!response.ok) throw new Error(track.label + ': HTTP ' + String(response.status));
-      const bytes = await response.arrayBuffer();
-      const buffer = await ctx.decodeAudioData(bytes);
+      bytes = await response.arrayBuffer();
+    } catch (error) {
+      this.emitter.emit('error', error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    try {
+      const buffer = await decodeWithRetry(bytes, [
+        (b) => ctx.decodeAudioData(b),
+        // A fresh decoder that shares nothing with the playing context.
+        (b) => new OfflineAudioContext(1, 1, ctx.sampleRate).decodeAudioData(b),
+      ]);
       if (this.isDestroyed()) return;
       this.buffers.set(track.id, buffer);
       // If the graph is already running this track has missed the scheduled
       // start, so it has to be placed at the current position instead.
       if (this.anchor !== null) this.attach(track.id, buffer, this.currentMediaTime());
       this.emitter.emit('trackready', track.id);
-    } catch (error) {
-      this.emitter.emit('error', error instanceof Error ? error : new Error(String(error)));
+    } catch {
+      this.emitter.emit('error', new Error(decodeFailureMessage(track.label)));
     }
   }
 
