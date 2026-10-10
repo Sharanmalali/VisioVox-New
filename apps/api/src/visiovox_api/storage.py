@@ -194,6 +194,18 @@ class ObjectStore:
             )
         return str(url)
 
+    async def get_text(self, key: str, max_bytes: int = 1_000_000) -> str:
+        """A small text object (a playlist). Raises StorageError if absent."""
+        async with self._session.client(**self._client_kwargs()) as s3:
+            try:
+                got = await s3.get_object(
+                    Bucket=self._settings.s3_bucket, Key=key, Range=f"bytes=0-{max_bytes - 1}"
+                )
+                body = await got["Body"].read()
+            except Exception as exc:
+                raise StorageError(str(exc)) from exc
+        return bytes(body).decode("utf-8")
+
     async def ensure_bucket(self) -> None:
         async with self._session.client(**self._client_kwargs()) as s3:
             try:

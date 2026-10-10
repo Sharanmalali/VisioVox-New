@@ -283,7 +283,8 @@ def package(
         "speakers": speakers,
         # docs/12 §2: the engine decision is made here, server-side, so the
         # duration and track-count thresholds are not duplicated in the client.
-        "playback_hint": choose_engine(duration_ms, len(speakers)),
+        # Every track the browser would decode: the speakers and the mix.
+        "playback_hint": choose_engine(duration_ms, len(speakers) + (mixed is not None)),
         "warnings": list(result.warnings),
         "signed_until": signed_until,
     }
@@ -301,13 +302,24 @@ def package(
 
     if manifest["playback_hint"] == "hls":
         try:
+            renditions = [(t.label, out_dir / f"spk_{t.ordinal}_f.m4a") for t in tracks]
+            if mixed is not None:
+                renditions.append(("Original mix", out_dir / "mixed.m4a"))
+            picture = out_dir / "video.mp4"
             hls = package_hls(
                 out_dir,
-                tracks=[(t.label, out_dir / f"spk_{t.ordinal}_f.m4a") for t in tracks],
+                tracks=renditions,
                 captions=[(t.label, f"spk_{t.ordinal}.vtt") for t in tracks],
                 duration_ms=duration_ms,
+                video=picture if has_video and picture.is_file() else None,
             )
-            manifest["hls"] = {"master": f"{base_url}{hls.master.name}"}
+            # The names the player reads (manifest schema): the master, and
+            # each selectable track's own rendition, matched by URI.
+            manifest["master_playlist"] = f"{base_url}{hls.master.name}"
+            for i, speaker in enumerate(speakers):
+                speaker["audio"]["hls"] = f"{base_url}{hls.audio[i].playlist}"
+            if mixed is not None:
+                mixed["hls"] = f"{base_url}{hls.audio[len(speakers)].playlist}"
         except Exception as exc:
             # A failed HLS build should not lose the project: Web Audio still
             # works, it just costs more memory on a long recording.

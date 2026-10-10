@@ -2,17 +2,19 @@
 
 The player has two engines. `WebAudioSyncEngine` fetches whole tracks and puts
 them on one AudioContext clock, which is sample-accurate and is what makes
-switching speakers feel instant. It also means downloading every track up
-front, and that stops being reasonable somewhere past ten minutes and four
-speakers.
+switching speakers feel instant. It also means downloading and decoding
+every track up front, and the memory that takes is duration times the number
+of tracks: past about 50 track-minutes (ten minutes of four speakers and the
+original mix) it stops being reasonable.
 
 Past that point `HlsSyncEngine` takes over: the browser streams and handles A/V
 sync natively, at the cost of a small gap when switching. The manifest's
 `playback_hint` says which engine to use, and that decision is made server-side
 so duration and track-count thresholds are not duplicated in the client.
 
-This module produces the HLS side: one audio rendition per speaker track, one
-subtitle rendition per speaker, and a master playlist tying them together.
+This module produces the HLS side: the picture as a video playlist, one audio
+rendition per speaker track plus the original mix, one subtitle rendition per
+speaker, and a master playlist tying them together.
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ SEGMENT_SECONDS = 6
 # decision is made once, server-side.
 WEBAUDIO_MAX_DURATION_MS = 10 * 60 * 1000
 WEBAUDIO_MAX_TRACKS = 4
+# The budget those two set: ten minutes of four speakers and the original mix,
+# all decoded at once. Duration and track count trade against each other: a
+# one-minute clip with eight people fits; an hour of one person does not.
+WEBAUDIO_MAX_TRACK_MS = WEBAUDIO_MAX_DURATION_MS * (WEBAUDIO_MAX_TRACKS + 1)
 
 
 class HlsError(RuntimeError):
@@ -53,11 +59,13 @@ class SubtitleRendition:
 def choose_engine(duration_ms: int, n_tracks: int) -> str:
     """Which playback engine the client should use.
 
-    Web Audio buys sample-accurate switching; HLS buys not downloading
-    everything first. The crossover is about total bytes held in memory, which
-    is duration multiplied by track count.
+    `n_tracks` counts everything the browser would decode: every speaker and
+    the original mix. Web Audio buys sample-accurate switching; HLS buys not
+    downloading everything first. The crossover is total memory, which is
+    duration multiplied by track count - not either one alone (a one-minute
+    clip with five people was once sent to HLS for having five tracks).
     """
-    if duration_ms > WEBAUDIO_MAX_DURATION_MS or n_tracks > WEBAUDIO_MAX_TRACKS:
+    if duration_ms * max(n_tracks, 1) > WEBAUDIO_MAX_TRACK_MS:
         return "hls"
     return "webaudio"
 
@@ -92,6 +100,46 @@ def segment_audio(source: Path, out_dir: Path, name: str) -> str:
             "128k",
             "-ac",
             "1",
+            "-f",
+            "hls",
+            "-hls_time",
+            str(SEGMENT_SECONDS),
+            "-hls_playlist_type",
+            "vod",
+            "-hls_segment_filename",
+            str(out_dir / f"{name}_%03d.ts"),
+            str(out_dir / playlist),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0 or not (out_dir / playlist).exists():
+        raise HlsError(f"segmenting {source.name} failed: {proc.stderr.strip()[:200]}")
+    return playlist
+
+
+def segment_video(source: Path, out_dir: Path, name: str = "v") -> str:
+    """Segment the picture into HLS without re-encoding. Returns the playlist name.
+
+    The packaged video.mp4 has no soundtrack (the speakers are the audio), so
+    this is the variant stream; the audio renditions ride beside it.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    playlist = f"{name}.m3u8"
+    proc = subprocess.run(  # noqa: S603 - resolved path, fixed argv
+        [
+            _ffmpeg(),
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-map",
+            "0:v:0",
+            "-c:v",
+            "copy",
+            "-an",
             "-f",
             "hls",
             "-hls_time",
@@ -190,12 +238,17 @@ def package_hls(
     captions: list[tuple[str, str]] | None = None,
     duration_ms: int = 0,
     video_playlist: str | None = None,
+    video: Path | None = None,
 ) -> HlsResult:
     """Build the full HLS tree.
 
-    `tracks` is (display name, wav path); `captions` is (display name, vtt
-    filename) already written into `out_dir`.
+    `tracks` is (display name, audio path), rendition `audio/a<i>.m3u8` in
+    that order; `captions` is (display name, vtt filename) already written into
+    `out_dir`; `video`, when given, is segmented into `video/v.m3u8` and
+    becomes the variant stream - without it the player shows no picture.
     """
+    if video is not None:
+        video_playlist = f"video/{segment_video(video, out_dir / 'video')}"
     audio_dir = out_dir / "audio"
     renditions: list[AudioRendition] = []
     for i, (name, path) in enumerate(tracks):

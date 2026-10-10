@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from . import audit, jobqueue, problems, quotas, uploads
+from . import audit, hls, jobqueue, problems, quotas, uploads
 from .config import Settings, get_settings
 from .deps import CurrentUser, OwnedProject, OwnedProjectSSE, SessionDep, SettingsDep
 from .languages import CAPTION_LANGUAGES
@@ -425,11 +425,17 @@ async def sign_manifest(manifest: dict[str, Any], settings: Settings) -> dict[st
         if isinstance(node, str) and node.startswith(base):
             key = node[len(base) :]
             if key not in cache:
-                cache[key] = await store.presign_get(key)
+                # A playlist names its segments relatively, so it is served
+                # rewritten (hls.py) rather than presigned as a file.
+                cache[key] = (
+                    hls.playlist_url(settings, key)
+                    if key.endswith(".m3u8")
+                    else await store.presign_get(key)
+                )
             return cache[key]
         return node
 
-    signed: dict[str, Any] = await walk(manifest)
+    signed: dict[str, Any] = await walk(hls.normalise_playback(manifest))
     # Now true rather than aspirational: the TTL starts at this request.
     signed["signed_until"] = (
         dt.datetime.now(dt.UTC) + dt.timedelta(seconds=settings.signed_url_ttl_seconds)

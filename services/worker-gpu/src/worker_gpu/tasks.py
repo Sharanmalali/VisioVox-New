@@ -189,6 +189,8 @@ def _rewrite_urls(node: Any, base: str) -> None:
                 "peaks_url",
                 "thumbnail_url",
                 "audio_url",
+                "master_playlist",
+                "hls",
             } and isinstance(value, str):
                 if not value.startswith(("http://", "https://")):
                     node[key] = base + value.lstrip("/")

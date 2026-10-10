@@ -51,18 +51,19 @@ def test_short_two_speaker_project_uses_webaudio() -> None:
 
 
 def test_long_project_switches_to_hls() -> None:
-    assert choose_engine(20 * 60 * 1000, 2) == "hls"
+    assert choose_engine(30 * 60 * 1000, 2) == "hls"
 
 
-def test_many_tracks_switch_to_hls() -> None:
-    """Total bytes held in memory is duration times track count, so either
-    dimension alone can force the switch."""
-    assert choose_engine(5 * 60 * 1000, 6) == "hls"
+def test_many_tracks_switch_to_hls_only_when_long_enough() -> None:
+    """Memory is duration times track count: many tracks alone are not enough."""
+    assert choose_engine(15 * 60 * 1000, 6) == "hls"
+    # The project that exposed it: 1.1 minutes, five speakers and the mix.
+    assert choose_engine(66_000, 6) == "webaudio"
 
 
 @pytest.mark.parametrize(
     ("duration_min", "tracks", "expected"),
-    [(10, 4, "webaudio"), (11, 4, "hls"), (10, 5, "hls"), (1, 1, "webaudio")],
+    [(10, 5, "webaudio"), (11, 5, "hls"), (25, 2, "webaudio"), (26, 2, "hls"), (1, 9, "webaudio")],
 )
 def test_engine_thresholds(duration_min: int, tracks: int, expected: str) -> None:
     assert choose_engine(duration_min * 60 * 1000, tracks) == expected
@@ -191,3 +192,29 @@ def test_audio_only_project_still_produces_a_variant(tmp_path: Path) -> None:
     master = result.master.read_text()
     assert "#EXT-X-STREAM-INF:" in master
     assert result.audio[0].playlist in master
+
+
+@needs_ffmpeg
+def test_package_hls_carries_the_picture_and_every_selectable_track(tmp_path: Path) -> None:
+    """Without the video variant the player streams sound over a black frame,
+    and without the original mix's rendition it cannot be selected."""
+    import subprocess
+
+    video = tmp_path / "video.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=25",
+            "-t", "8", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "25", str(video),
+        ],
+        check=True,
+    )  # fmt: skip
+    a = _wav(tmp_path / "spk1.wav", seconds=8.0, freq=220)
+    mix = _wav(tmp_path / "mixed.wav", seconds=8.0, freq=330)
+    result = package_hls(
+        tmp_path, tracks=[("Speaker 1", a), ("Original mix", mix)], duration_ms=8000, video=video
+    )
+    master = result.master.read_text()
+    assert master.rstrip().endswith("video/v.m3u8"), "the variant is the picture"
+    assert 'NAME="Original mix"' in master
+    assert [r.playlist for r in result.audio] == ["audio/a0.m3u8", "audio/a1.m3u8"]
+    assert list((tmp_path / "video").glob("v_*.ts"))

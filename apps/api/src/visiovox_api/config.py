@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # --- web / api ---
     next_public_app_url: str = "http://localhost:3000"
     api_internal_url: str = "http://localhost:8000"
+    # Where browsers reach this API (the web app's NEXT_PUBLIC_API_URL): signed
+    # streaming playlists link back to it.
+    public_api_url: str = "http://localhost:8000"
 
     # --- firebase identity (ADR-0016) ---
     # The project whose tokens we accept. An ID token signed for any other

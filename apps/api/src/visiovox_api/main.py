@@ -44,6 +44,7 @@ from .ratelimit import RateLimiter
 from .redis_client import close_redis, get_redis
 from .routes_dubs import router as dubs_router
 from .routes_exports import router as exports_router
+from .routes_hls import router as hls_router
 from .routes_media import limits_router
 from .routes_media import router as media_router
 from .routes_share import router as share_router
@@ -390,3 +391,4 @@ app.include_router(translations_router)
 app.include_router(summaries_router)
 app.include_router(dubs_router)
 app.include_router(study_router)
+app.include_router(hls_router)
