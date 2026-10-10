@@ -39,6 +39,16 @@ from visiovox_api.config import Settings
 from . import av_tse
 from .stagerunner import StagePlan, StageRunner
 
+# The most speakers a project holds (manifest schema, projects_speaker_count_check).
+MAX_SPEAKERS = 8
+
+
+def most_heard[T](people: list[T], spoken: list[float], n: int) -> list[T]:
+    """The `n` people with the most speech, in their original order."""
+    loudest = sorted(range(len(people)), key=lambda i: -spoken[i])[:n]
+    return [people[i] for i in sorted(loudest)]
+
+
 logger = logging.getLogger(__name__)
 
 # Progress weights. Extraction dominates: face detection and one model pass per
@@ -281,6 +291,15 @@ def run_pipeline(
             )
             if len(people) < len(speaking):
                 report.warn("face_tracks_merged")
+            if len(people) > MAX_SPEAKERS:
+                # A TV panel or a crowd can show more faces than a project
+                # holds (the manifest and the database allow eight). Keep the
+                # eight who speak most, in their order; everyone is still in
+                # the original mix. Found when a 14-person debate crashed at
+                # the very end of processing.
+                spoken = [float(np.sum(av_tse.active_frames(p.audio))) for p in people]
+                people = most_heard(people, spoken, MAX_SPEAKERS)
+                report.warn("speakers_capped")
 
         tracks: list[SpeakerTrack] = []
         for ordinal, person in enumerate(people, start=1):

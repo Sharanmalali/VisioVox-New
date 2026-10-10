@@ -298,39 +298,73 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
             )
             raise
 
-        _publish_artifacts(output.artifact_dir, project, output.manifest)
-        shutil.rmtree(output.artifact_dir.parent, ignore_errors=True)
+        try:
+            return _complete_job(session, runner, job, project, output, settings, job_id)
+        except Exception as exc:
+            # The result was computed but could not be stored. Without this the
+            # job stays "running" for ever and the page waits for ever (it did,
+            # for a 14-speaker debate that broke a database constraint).
+            logger.exception("could not store the result of job %s", job_id)
+            session.rollback()
+            job = session.get(Job, job_id) or job
+            project = session.get(Project, job.project_id) or project
+            job.status = "failed"
+            job.error_code = "STORE_FAILED"
+            job.error_detail = str(exc)[:500]
+            job.finished_at = _now()
+            project.status = "failed"
+            session.commit()
+            publish(
+                settings.redis_url,
+                job_id,
+                {"status": "failed", "progress": job.progress, "stage": None},
+            )
+            return {"status": "failed", "job_id": job_id, "reason": "store_failed"}
 
-        project.manifest = output.manifest
-        project.speaker_count = output.speaker_count
-        project.overlap_ratio = output.overlap_ratio
-        project.difficulty = output.difficulty
-        project.warnings = output.warnings
-        if output.duration_ms:
-            project.duration_ms = output.duration_ms
-        # The export ladder is derived from the source's height; without it
-        # every project offers audio only, video or not.
-        video = output.manifest.get("video") if output.manifest else None
-        if isinstance(video, dict):
-            project.width = video.get("width") or project.width
-            project.height = video.get("height") or project.height
-        project.status = "ready"
 
-        _meter_gpu_seconds(session, project.user_id, output.gpu_seconds)
+def _complete_job(
+    session: Any,
+    runner: Any,
+    job: Job,
+    project: Project,
+    output: Any,
+    settings: Settings,
+    job_id: str,
+) -> dict[str, Any]:
+    """Publish a finished pipeline's artifacts and record the project as ready."""
+    _publish_artifacts(output.artifact_dir, project, output.manifest)
+    shutil.rmtree(output.artifact_dir.parent, ignore_errors=True)
 
-        # Invariant 8: some speakers recovered is a partial success, not a
-        # failure, and the distinction is visible to the user.
-        runner.finish(
-            status="partial" if _outcome_degraded(output, settings) else "succeeded",
-            stage="S9_package",
-        )
+    project.manifest = output.manifest
+    project.speaker_count = output.speaker_count
+    project.overlap_ratio = output.overlap_ratio
+    project.difficulty = output.difficulty
+    project.warnings = output.warnings
+    if output.duration_ms:
+        project.duration_ms = output.duration_ms
+    # The export ladder is derived from the source's height; without it
+    # every project offers audio only, video or not.
+    video = output.manifest.get("video") if output.manifest else None
+    if isinstance(video, dict):
+        project.width = video.get("width") or project.width
+        project.height = video.get("height") or project.height
+    project.status = "ready"
 
-        return {
-            "status": job.status,
-            "job_id": job_id,
-            "speakers": output.speaker_count,
-            "gpu_seconds": round(output.gpu_seconds, 1),
-        }
+    _meter_gpu_seconds(session, project.user_id, output.gpu_seconds)
+
+    # Invariant 8: some speakers recovered is a partial success, not a
+    # failure, and the distinction is visible to the user.
+    runner.finish(
+        status="partial" if _outcome_degraded(output, settings) else "succeeded",
+        stage="S9_package",
+    )
+
+    return {
+        "status": job.status,
+        "job_id": job_id,
+        "speakers": output.speaker_count,
+        "gpu_seconds": round(output.gpu_seconds, 1),
+    }
 
 
 def _outcome_degraded(output: Any, settings: Settings) -> bool:
@@ -1134,12 +1168,29 @@ def _trim(source: Path, start_ms: int, end_ms: int | None) -> Path:
 # A link that resolves to something other than these is refused even if the
 # API's host check were bypassed (routes_import.py).
 _IMPORT_EXTRACTORS = ["youtube", "vimeo"]
-# Prefer H.264 so the trim preview plays in every browser (Safari has no AV1).
-_IMPORT_FORMAT = (
-    "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/"
-    "b[height<=720][vcodec^=avc1]/"
-    "bv*[height<=720]+ba/b[height<=720]/b"
+# Tried in order. YouTube hands out a different set of streams on each request
+# and throttles or refuses (HTTP 403) individual stream links at random - the
+# same 48-minute video gave one stream at 16 MB/s, its neighbour at 0.4 MB/s
+# and a third a 403 (2026-10-10) - so a refused or crawling attempt moves on
+# rather than failing the import or taking twenty minutes. H.264 first so the
+# trim preview plays in every browser (Safari has no AV1).
+_IMPORT_FORMATS = (
+    "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720][vcodec^=avc1]",
+    "bv*[height<=720]+ba/b[height<=720]",
+    "bv*[height<=480]+ba/b[height<=480]",
+    "b/bv*+ba",
 )
+# Kept for callers that want one selector.
+_IMPORT_FORMAT = _IMPORT_FORMATS[0]
+# A download this slow after this long, with this much left, is a throttled
+# link: abandon it and ask again.
+_SLOW_BYTES_PER_S = 1_000_000
+_SLOW_AFTER_S = 45
+_SLOW_IF_LEFT_S = 240
+
+
+class _ThrottledError(Exception):
+    """The current stream link is crawling; try another."""
 
 
 def _import_error(exc: Exception) -> str:
@@ -1179,6 +1230,7 @@ def import_media(self: Any, import_id: str) -> dict[str, Any]:
     import shutil
     import subprocess
     import tempfile
+    import time
 
     import yt_dlp
 
@@ -1205,16 +1257,27 @@ def import_media(self: Any, import_id: str) -> dict[str, Any]:
         work_root.mkdir(parents=True, exist_ok=True)
         work = Path(tempfile.mkdtemp(prefix=f"import-{import_id}-", dir=work_root))
         last = {"pct": -10}
+        started: dict[str, float] = {}
 
         def hook(d: dict[str, Any]) -> None:
             if d.get("status") != "downloading":
                 return
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-            pct = int(100 * d.get("downloaded_bytes", 0) / total) if total else 0
+            got = d.get("downloaded_bytes", 0)
+            pct = int(100 * got / total) if total else 0
             if pct >= last["pct"] + 5:
                 last["pct"] = pct
                 row.progress = max(0, min(99, pct))
                 session.commit()
+            # Per file (video, then audio): a throttled link shows itself early.
+            key = str(d.get("filename"))
+            now = time.monotonic()
+            started.setdefault(key, now)
+            elapsed = now - started[key]
+            if total and elapsed > _SLOW_AFTER_S:
+                rate = got / elapsed
+                if rate < _SLOW_BYTES_PER_S and (total - got) / max(rate, 1) > _SLOW_IF_LEFT_S:
+                    raise _ThrottledError(f"throttled at {rate / 1e6:.2f} MB/s")
 
         def too_long(info: dict[str, Any], *, incomplete: bool) -> str | None:
             if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming"}:
@@ -1229,7 +1292,9 @@ def import_media(self: Any, import_id: str) -> dict[str, Any]:
 
         options: dict[str, Any] = {
             "outtmpl": str(work / "source.%(ext)s"),
-            "format": _IMPORT_FORMAT,
+            "format": _IMPORT_FORMATS[0],
+            # Segmented streams in parallel pieces, where YouTube offers them.
+            "concurrent_fragment_downloads": 8,
             "merge_output_format": "mp4",
             "noplaylist": True,
             "allowed_extractors": _IMPORT_EXTRACTORS,
@@ -1245,12 +1310,35 @@ def import_media(self: Any, import_id: str) -> dict[str, Any]:
         if node:
             options["js_runtimes"] = {"node": {"path": node}}
         try:
-            try:
-                with yt_dlp.YoutubeDL(options) as ydl:
-                    info = ydl.extract_info(row.url, download=True)
-            except Exception as exc:
-                logger.warning("import %s failed: %s", import_id, exc)
-                return fail(_import_error(exc))
+            info = None
+            error: Exception | None = None
+            # Each format twice: a second request gets fresh stream links, and a
+            # throttled or refused link is usually not refused again.
+            for attempt, fmt in enumerate(f for f in _IMPORT_FORMATS for _ in range(2)):
+                for leftover in work.glob("source.*"):
+                    leftover.unlink(missing_ok=True)
+                started.clear()
+                try:
+                    with yt_dlp.YoutubeDL({**options, "format": fmt}) as ydl:
+                        info = ydl.extract_info(row.url, download=True)
+                    error = None
+                    break
+                except Exception as exc:
+                    error = exc
+                    text = str(exc).lower()
+                    retryable = (
+                        isinstance(exc, _ThrottledError)
+                        or "throttled" in text
+                        or "403" in text
+                        or "requested format is not available" in text
+                        or "http error 5" in text
+                        or "timed out" in text
+                    )
+                    logger.warning("import %s attempt %d (%s): %s", import_id, attempt, fmt, exc)
+                    if not retryable:
+                        break
+            if error is not None:
+                return fail(_import_error(error))
             if info is None:
                 return fail("The video could not be downloaded. Check the link and try again.")
             files = sorted(work.glob("source.*"))

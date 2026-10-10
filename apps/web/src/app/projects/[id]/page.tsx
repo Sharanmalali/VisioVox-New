@@ -46,6 +46,8 @@ function warningText(code: string): string {
   const known: Record<string, string> = {
     silent_face_track_dropped: 'A face that never spoke was left out.',
     face_tracks_merged: 'Some people appeared in several shots and were joined into one track.',
+    speakers_capped:
+      'More than eight people were found. The eight who speak most have their own tracks; everyone can still be heard in the original mix.',
     captions_unavailable: 'Captions could not be produced for this recording.',
     video_resampled_to_25fps: 'The video was converted to 25 frames per second for processing.',
   };
