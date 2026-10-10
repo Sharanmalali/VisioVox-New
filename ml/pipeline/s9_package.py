@@ -28,6 +28,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
+from .face_card import write_card_photo
 from .s7_transcribe import Transcript
 from .s9_hls import choose_engine, package_hls
 from .types import (
@@ -290,6 +291,21 @@ def package(
     }
     if mixed is not None:
         manifest["mixed"] = mixed
+    # Each person's photo for their speaker card, from the frame where their
+    # face is largest. Optional: no face, no photo, and the card says so.
+    picture = out_dir / "video.mp4"
+    if has_video and video_size is not None and picture.is_file():
+        for track, speaker in zip(tracks, speakers, strict=True):
+            photo = out_dir / f"spk_{track.ordinal}_face.jpg"
+            try:
+                made = bool(track.faces) and write_card_photo(
+                    picture, track.faces or [], video_size, photo
+                )
+            except Exception:  # a card photo must never cost the project
+                made = False
+            if made:
+                speaker["thumbnail_url"] = f"{base_url}{photo.name}"
+
     if has_video and video_url is not None and video_size is not None:
         manifest["video"] = {
             "url": video_url,

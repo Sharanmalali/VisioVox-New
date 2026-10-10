@@ -31,6 +31,12 @@ database. That is the thing to design away from, not to manage with a policy.
 ### D1 — Biometric derivatives are ephemeral by default ⭐
 
 Speaker embeddings and face crops exist **only for the duration of the job** and are deleted at S9.
+
+**D1a — one card photo per speaker (2026-10-10).** Each speaker card shows a still of that person:
+a 320×200 head-and-shoulders region of one frame of the packaged video (`spk_<n>_face.jpg`,
+`ml/pipeline/face_card.py`). It is not a biometric template: the project already stores the video it
+is cut from. It is not used for matching and it is kept and deleted with the project. The aligned face
+crops and embeddings used during processing remain job-only, as above.
 The database column is nullable and normally null
 ([`10-data-model.md`](./10-data-model.md) §2, invariant I4).
 

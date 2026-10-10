@@ -180,8 +180,8 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
         </div>
 
         <p className="text-[12.5px] leading-relaxed text-fg-muted">
-          Whoever shared this can revoke the link at any time. Voiceprints and face crops from the
-          original recording were deleted when it finished processing.
+          Whoever shared this can revoke the link at any time. Voiceprints and the face crops used
+          to separate the voices in the original recording were deleted when it finished processing.
         </p>
       </div>
     </ShareChrome>

@@ -36,6 +36,7 @@ from .config import Settings, get_settings
 from .deps import CurrentUser, OwnedProject, OwnedProjectSSE, SessionDep, SettingsDep
 from .languages import CAPTION_LANGUAGES
 from .models import Job, UploadSession
+from .photos import attach_card_photos
 from .ratelimit import RULES, RateLimiter, client_ip, enforce
 from .redis_client import get_redis
 from .schemas import (
@@ -435,7 +436,8 @@ async def sign_manifest(manifest: dict[str, Any], settings: Settings) -> dict[st
             return cache[key]
         return node
 
-    signed: dict[str, Any] = await walk(hls.normalise_playback(manifest))
+    with_photos = await attach_card_photos(hls.normalise_playback(manifest), settings, store)
+    signed: dict[str, Any] = await walk(with_photos)
     # Now true rather than aspirational: the TTL starts at this request.
     signed["signed_until"] = (
         dt.datetime.now(dt.UTC) + dt.timedelta(seconds=settings.signed_url_ttl_seconds)

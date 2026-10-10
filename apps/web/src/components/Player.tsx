@@ -501,6 +501,9 @@ function SpeakerRail({
   onSelect,
   nameOf,
 }: SpeakerRailProps): React.JSX.Element {
+  // A photo that fails to load (expired link, removed object) falls back to the
+  // numbered tile rather than a broken-image icon.
+  const [brokenPhotos, setBrokenPhotos] = useState<ReadonlySet<TrackId>>(new Set());
   return (
     <div className="rail" role="radiogroup" aria-label="Speaker">
       {speakers.map((speaker) => (
@@ -515,11 +518,19 @@ function SpeakerRail({
             onSelect(speaker.id);
           }}
         >
-          {speaker.thumbnail_url !== undefined ? (
+          {speaker.thumbnail_url !== undefined && !brokenPhotos.has(speaker.id) ? (
             // A plain <img>, not next/image: these are signed CDN URLs with an
             // expiry, and the image optimiser would cache them past
             // signed_until and then serve 403s from its own cache.
-            <img className="rail-face" src={speaker.thumbnail_url} alt="" />
+            <img
+              className="rail-face"
+              src={speaker.thumbnail_url}
+              alt=""
+              loading="lazy"
+              onError={() => {
+                setBrokenPhotos((s) => new Set(s).add(speaker.id));
+              }}
+            />
           ) : (
             <span className="rail-face rail-face-none" aria-hidden="true">
               {String(speaker.ordinal)}
