@@ -114,6 +114,9 @@ export function Player({
   const [captionsReady, setCaptionsReady] = useState(false);
   // Levels per track while mixing (TrackId -> 0..2); null when one is selected.
   const [mix, setMix] = useState<Record<TrackId, number> | null>(null);
+  // The video plays but the browser has not let sound start (Safari, until a
+  // real click): offer the click rather than play in silence.
+  const [soundBlocked, setSoundBlocked] = useState(false);
 
   const engineKind = useMemo(
     () => forceEngine ?? resolveEngine(manifest, typeof AudioContext !== 'undefined'),
@@ -138,6 +141,17 @@ export function Player({
       setError(e.message);
     });
 
+    const checkSound = () => {
+      window.setTimeout(() => {
+        const state = engine.audioState?.();
+        setSoundBlocked(!video.paused && state !== undefined && state !== 'running');
+      }, 700);
+    };
+    video.addEventListener('play', checkSound);
+    const offSound = () => {
+      video.removeEventListener('play', checkSound);
+    };
+
     let cancelled = false;
     void engine
       .load(manifest, video)
@@ -154,6 +168,7 @@ export function Player({
 
     return () => {
       cancelled = true;
+      offSound();
       offTrack();
       offDrift();
       offState();
@@ -352,6 +367,20 @@ export function Player({
         )}
       </div>
 
+      {soundBlocked && (
+        <button
+          type="button"
+          className="sound-blocked"
+          onClick={() => {
+            void engineRef.current?.resumeAudio?.().then(() => {
+              setSoundBlocked(false);
+            });
+          }}
+        >
+          Turn on sound
+          <span className="muted"> - this browser waits for a click before playing audio</span>
+        </button>
+      )}
       {error !== null && <p className="error">{error}</p>}
 
       {engineState === 'switching' && (

@@ -41,6 +41,10 @@ export interface PlaybackEngine {
    * WebAudio engine can mix; under HLS one element carries one rendition.
    */
   setMix?(levels: ReadonlyMap<TrackId, number> | null): void;
+  /** 'running' when sound can play; 'suspended' while the browser waits for a gesture. */
+  audioState?(): string;
+  /** Resume sound; call it from a click handler. */
+  resumeAudio?(): Promise<void>;
   /** Manual A/V correction for device latency, in ms. docs/12 §3.6. */
   setOffsetMs(offsetMs: number): void;
   getOffsetMs(): number;

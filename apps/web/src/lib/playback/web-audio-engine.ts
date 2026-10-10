@@ -41,6 +41,8 @@ export interface WebAudioEngineOptions {
 }
 
 const OFFSET_STORAGE_KEY = 'visiovox.avOffsetMs';
+// Events Safari accepts as a user gesture for starting audio.
+const UNLOCK_EVENTS = ['pointerdown', 'keydown', 'touchend'] as const;
 
 export class WebAudioSyncEngine implements PlaybackEngine {
   private readonly emitter = new Emitter<EngineEvents>();
@@ -96,6 +98,12 @@ export class WebAudioSyncEngine implements PlaybackEngine {
     video.addEventListener('ratechange', this.onRateChange);
     document.addEventListener('visibilitychange', this.onVisibility);
     ctx.addEventListener('statechange', this.onCtxStateChange);
+    // Safari starts audio only inside a real user gesture, and does not count
+    // the video's 'play' event as one: playback ran with no sound at all.
+    // Any click, tap or key press on the page resumes the context.
+    for (const type of UNLOCK_EVENTS) {
+      document.addEventListener(type, this.unlock, { capture: true });
+    }
 
     // Decode the selected track first and resolve on it, so playback can begin
     // while the rest are still arriving. A late buffer is scheduled into the
@@ -162,12 +170,26 @@ export class WebAudioSyncEngine implements PlaybackEngine {
 
   // -------------------------------------------------------------- transport
 
+  private readonly unlock = (): void => {
+    if (this.ctx !== null && this.ctx.state !== 'running') void this.ctx.resume();
+  };
+
+  /** Whether sound can play now; 'suspended' means the browser is waiting for a gesture. */
+  audioState(): string {
+    return this.ctx?.state ?? 'closed';
+  }
+
+  /** Call from a click handler: that click is the gesture the browser needs. */
+  resumeAudio(): Promise<void> {
+    return this.ctx !== null ? this.ctx.resume() : Promise.resolve();
+  }
+
   private readonly onPlay = (): void => {
     const ctx = this.ctx;
     const video = this.video;
     if (ctx === null || video === null) return;
-    // Every browser starts the context suspended, and resuming is only allowed
-    // inside a user gesture. `play` is that gesture — non-negotiable on iOS.
+    // Chrome lets 'play' resume the context; Safari needs a real gesture,
+    // which `unlock` and the player's "Turn on sound" button provide.
     void ctx.resume();
     this.rate = video.playbackRate;
     this.start(video.currentTime);
@@ -437,6 +459,9 @@ export class WebAudioSyncEngine implements PlaybackEngine {
     }
     document.removeEventListener('visibilitychange', this.onVisibility);
     this.ctx?.removeEventListener('statechange', this.onCtxStateChange);
+    for (const type of UNLOCK_EVENTS) {
+      document.removeEventListener(type, this.unlock, { capture: true });
+    }
     void this.ctx?.close();
     this.ctx = null;
     this.master = null;
