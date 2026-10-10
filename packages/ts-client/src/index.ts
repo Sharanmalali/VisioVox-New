@@ -41,6 +41,7 @@ export type ExportLinkResponse = Schemas['ExportLinkResponse'];
 export type DubResponse = Schemas['DubResponse'];
 export type DubListResponse = Schemas['DubListResponse'];
 export type StudySessionRequest = Schemas['StudySessionRequest'];
+export type ImportResponse = Schemas['ImportResponse'];
 export type StudySessionResponse = Schemas['StudySessionResponse'];
 
 export const CLIENT_VERSION = '0.1.0' as const;
@@ -185,6 +186,34 @@ export class VisioVoxClient {
     return this.request<TranslationResponse>(`/v1/projects/${id}/translations`, {
       method: 'POST',
       body: JSON.stringify({ language }),
+    });
+  }
+
+  /** Import a recording from a YouTube or Vimeo link; it downloads in the background. */
+  importFromLink(
+    url: string,
+    title: string | null,
+    language: string | null,
+  ): Promise<ImportResponse> {
+    return this.request<ImportResponse>('/v1/imports', {
+      method: 'POST',
+      body: JSON.stringify({ url, title: title || null, language, rights_attested: true }),
+    });
+  }
+
+  /** How an import is going, and the downloaded video once it is there. */
+  getImport(projectId: string): Promise<ImportResponse> {
+    return this.request<ImportResponse>(`/v1/projects/${projectId}/import`);
+  }
+
+  /** Start processing an imported recording - all of it, or the part given. */
+  processPart(
+    projectId: string,
+    part: { start_ms?: number; end_ms?: number },
+  ): Promise<{ job_id: string; status: string }> {
+    return this.request(`/v1/projects/${projectId}/process`, {
+      method: 'POST',
+      body: JSON.stringify(part),
     });
   }
 

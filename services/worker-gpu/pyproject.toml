@@ -3,7 +3,9 @@ name = "visiovox-worker-gpu"
 version = "0.1.0"
 description = "S1-S8 GPU inference worker"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "yt-dlp>=2025.9",
+]
 
 [build-system]
 requires = ["hatchling"]

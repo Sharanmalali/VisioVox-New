@@ -11,6 +11,7 @@ import type { Clip } from '@/components/ExportPanel';
 import { InsightsPanel, insightBlocks, insightsFor } from '@/components/InsightsPanel';
 import { IconChevronDown, IconChevronRight, IconInfo } from '@/components/icons';
 import { Player } from '@/components/Player';
+import { ImportPanel } from '@/components/ImportPanel';
 import { ProcessingView } from '@/components/ProcessingView';
 import { SharePanel } from '@/components/SharePanel';
 import { SummaryPanel, summaryBlocks, useSummary } from '@/components/SummaryPanel';
@@ -66,12 +67,24 @@ export default function ProjectPage() {
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [job, setJob] = useState<JobResponse | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
+  // Bumped when an import starts processing, to load the new job.
+  const [reloads, setReloads] = useState(0);
+  const [maxSeconds, setMaxSeconds] = useState<number | null>(null);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Nothing is fetched until the session is restored: opened from the vault
   // or refreshed, the first render has no user yet, and a request then goes
   // out without a token.
   const authed = useRequireSignIn();
+  useEffect(() => {
+    if (!authed) return;
+    void api()
+      .getLimits()
+      .then((l) => {
+        setMaxSeconds(l.max_duration_seconds);
+      })
+      .catch(() => undefined);
+  }, [authed]);
   const translation = useTranslations(projectId, manifest);
   const summary = useSummary(projectId, manifest !== null);
 
@@ -156,7 +169,7 @@ export default function ProjectPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, authed]);
+  }, [projectId, authed, reloads]);
 
   // The manifest carries signed URLs with an expiry, so it is fetched once the
   // project reaches `ready` rather than alongside the project record.
@@ -292,6 +305,16 @@ export default function ProjectPage() {
                   ))}
                 </ul>
               </Alert>
+            )}
+
+            {project.status === 'pending' && job === null && (
+              <ImportPanel
+                projectId={projectId}
+                maxSeconds={maxSeconds}
+                onStarted={() => {
+                  setReloads((n) => n + 1);
+                }}
+              />
             )}
 
             {progress !== null && !TERMINAL.has(progress.status) && (

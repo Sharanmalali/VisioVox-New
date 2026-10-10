@@ -100,6 +100,8 @@ export default function UploadPage() {
   const [progress, setProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const handleRef = useRef<UploadHandle | null>(null);
+  const [link, setLink] = useState('');
+  const [importing, setImporting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -155,6 +157,21 @@ export default function UploadPage() {
       setError(err instanceof Error ? err.message : 'Could not start the upload');
     }
   }
+
+  async function importLink() {
+    setError(null);
+    setImporting(true);
+    try {
+      const started = await api().importFromLink(link.trim(), title.trim() || null, language);
+      router.push(`/projects/${started.project_id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not import that link');
+      setImporting(false);
+    }
+  }
+  const linkLooksRight = /^https?:\/\/([a-z]+\.)?(youtube\.com|youtu\.be|vimeo\.com)\//i.test(
+    link.trim(),
+  );
 
   const maxBytes = limits?.max_upload_bytes ?? null;
   const maxSeconds = limits?.max_duration_seconds ?? null;
@@ -272,6 +289,61 @@ export default function UploadPage() {
                 </div>
               )}
             </div>
+
+            {/* ---- or a link ---- */}
+            {file === null && (
+              <Slab>
+                <SlabHead
+                  label="Or import from a link"
+                  description="Paste a YouTube or Vimeo link. The video downloads on our server; then you choose the part to process."
+                />
+                <div className="flex flex-col gap-5 p-5 sm:p-6">
+                  <Field
+                    label="Video link"
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    value={link}
+                    inputMode="url"
+                    onChange={(e) => {
+                      setLink(e.target.value);
+                    }}
+                  />
+                  <Field
+                    label="Project name (optional - the video's title is used otherwise)"
+                    value={title}
+                    maxLength={200}
+                    onChange={(e) => {
+                      setTitle(e.target.value);
+                    }}
+                  />
+                  <LanguageSelect
+                    languages={limits?.caption_languages}
+                    value={language}
+                    onChange={setLanguage}
+                  />
+                  <Checkbox checked={attested} onChange={setAttested}>
+                    I have the right to use this video and to process the voices in it - it is mine,
+                    its licence allows it, or its owner agreed.
+                  </Checkbox>
+                  {error !== null && <Alert tone="danger">{error}</Alert>}
+                  <div className="flex flex-wrap items-center gap-3 border-t border-border-subtle pt-5">
+                    <Button
+                      size="lg"
+                      disabled={!attested || !linkLooksRight || importing}
+                      onClick={() => {
+                        void importLink();
+                      }}
+                    >
+                      {importing ? 'Starting…' : 'Import video'}
+                    </Button>
+                    {link.trim() !== '' && !linkLooksRight && (
+                      <span className="text-[13px] text-fg-muted">
+                        Only YouTube and Vimeo links can be imported.
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </Slab>
+            )}
 
             {/* ---- what will happen, before committing ---- */}
             {file && !busy && (

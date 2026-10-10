@@ -28,6 +28,7 @@ from visiovox_api.models import (
     Dub,
     Export,
     Job,
+    MediaImport,
     Project,
     Summary,
     Translation,
@@ -245,6 +246,8 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
         runner = StageRunner(session, job, settings.redis_url)
         try:
             source = _fetch_source(settings, project.source_key or "", job_id)
+            if project.trim_start_ms is not None or project.trim_end_ms is not None:
+                source = _trim(source, project.trim_start_ms or 0, project.trim_end_ms)
         except Exception as exc:
             logger.warning("could not fetch the source object: %s", exc)
             job.status = "failed"
@@ -1103,3 +1106,192 @@ def dub_project(self: Any, dub_id: str) -> dict[str, Any]:
         row.finished_at = _now()
         session.commit()
         return {"status": "ready", "dub_id": dub_id, "lines": len(lines)}
+
+
+# ------------------------------------------------------------------ imports --
+
+
+def _trim(source: Path, start_ms: int, end_ms: int | None) -> Path:
+    """The chosen part of `source`, cut frame-accurately (re-encoded: a stream
+    copy can only cut at keyframes, seconds away from where the person chose)."""
+    import subprocess
+
+    out = source.with_name("trimmed.mp4")
+    cmd = ["ffmpeg", "-v", "error", "-y", "-ss", f"{start_ms / 1000:.3f}", "-i", str(source)]
+    if end_ms is not None:
+        cmd += ["-t", f"{(end_ms - start_ms) / 1000:.3f}"]
+    cmd += [
+        "-map", "0:v:0?", "-map", "0:a:0?",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out),
+    ]  # fmt: skip
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=3600)  # noqa: S603
+    if proc.returncode != 0 or not out.is_file():
+        raise RuntimeError(f"trimming failed: {proc.stderr.strip()[:200]}")
+    return out
+
+
+# A link that resolves to something other than these is refused even if the
+# API's host check were bypassed (routes_import.py).
+_IMPORT_EXTRACTORS = ["youtube", "vimeo"]
+# Prefer H.264 so the trim preview plays in every browser (Safari has no AV1).
+_IMPORT_FORMAT = (
+    "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/"
+    "b[height<=720][vcodec^=avc1]/"
+    "bv*[height<=720]+ba/b[height<=720]/b"
+)
+
+
+def _import_error(exc: Exception) -> str:
+    """What a person can act on, from yt-dlp's message."""
+    text = str(exc)
+    low = text.lower()
+    if "longer than" in low:
+        return text
+    if "private" in low:
+        return "This video is private. Only public or unlisted videos can be imported."
+    if "sign in" in low or ("age" in low and "confirm" in low):
+        return "This video needs a signed-in account (age-restricted or members-only)."
+    if "unavailable" in low or "removed" in low or "not available" in low:
+        return "This video is unavailable - it may have been removed or blocked in this region."
+    if "live" in low:
+        return "Live streams cannot be imported; wait until the stream has ended."
+    if "file is larger" in low or "max-filesize" in low:
+        return "This video is too large to import."
+    return "The video could not be downloaded. Check the link and try again."
+
+
+def _node_path() -> str | None:
+    """A JavaScript runtime for YouTube's player code, if one is installed."""
+    import shutil
+
+    found = shutil.which("node")
+    if found:
+        return found
+    candidates = sorted(Path.home().glob(".nvm/versions/node/*/bin/node"))
+    return str(candidates[-1]) if candidates else None
+
+
+@celery_app.task(name="visiovox.import_media", bind=True, max_retries=0)
+def import_media(self: Any, import_id: str) -> dict[str, Any]:
+    """Download an imported link into its project's source slot."""
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+
+    import yt_dlp
+
+    with _Session() as session:
+        row = session.get(MediaImport, import_id)
+        if row is None:
+            return {"status": "missing", "import_id": import_id}
+        project = session.get(Project, row.project_id)
+        if project is None or project.source_key is None:
+            return {"status": "missing_project", "import_id": import_id}
+
+        def fail(reason: str) -> dict[str, Any]:
+            row.status = "failed"
+            row.error_detail = reason[:500]
+            row.finished_at = _now()
+            project.status = "failed"
+            session.commit()
+            return {"status": "failed", "import_id": import_id, "reason": reason}
+
+        row.status = "downloading"
+        session.commit()
+        limit_s = settings.max_duration_seconds
+        work_root = Path(settings.media_work_dir)
+        work_root.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix=f"import-{import_id}-", dir=work_root))
+        last = {"pct": -10}
+
+        def hook(d: dict[str, Any]) -> None:
+            if d.get("status") != "downloading":
+                return
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            pct = int(100 * d.get("downloaded_bytes", 0) / total) if total else 0
+            if pct >= last["pct"] + 5:
+                last["pct"] = pct
+                row.progress = max(0, min(99, pct))
+                session.commit()
+
+        def too_long(info: dict[str, Any], *, incomplete: bool) -> str | None:
+            if info.get("is_live") or info.get("live_status") in {"is_live", "is_upcoming"}:
+                return "Live streams cannot be imported; wait until the stream has ended."
+            duration = info.get("duration")
+            if duration and duration > limit_s:
+                return (
+                    f"This video is longer than {limit_s // 60} minutes "
+                    f"({int(duration) // 60} min). Import a shorter one."
+                )
+            return None
+
+        options: dict[str, Any] = {
+            "outtmpl": str(work / "source.%(ext)s"),
+            "format": _IMPORT_FORMAT,
+            "merge_output_format": "mp4",
+            "noplaylist": True,
+            "allowed_extractors": _IMPORT_EXTRACTORS,
+            "match_filter": too_long,
+            "max_filesize": settings.max_upload_bytes,
+            "progress_hooks": [hook],
+            "socket_timeout": 30,
+            "retries": 3,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        node = _node_path()
+        if node:
+            options["js_runtimes"] = {"node": {"path": node}}
+        try:
+            try:
+                with yt_dlp.YoutubeDL(options) as ydl:
+                    info = ydl.extract_info(row.url, download=True)
+            except Exception as exc:
+                logger.warning("import %s failed: %s", import_id, exc)
+                return fail(_import_error(exc))
+            if info is None:
+                return fail("The video could not be downloaded. Check the link and try again.")
+            files = sorted(work.glob("source.*"))
+            if not files:
+                reason = too_long(info, incomplete=False)
+                return fail(reason or "The video could not be downloaded.")
+            source = files[0]
+            probe = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "ffprobe", "-v", "error", "-show_entries",
+                    "format=duration:stream=codec_type,width,height", "-of", "json", str(source),
+                ],
+                check=False, capture_output=True, text=True,
+            )  # fmt: skip
+            meta = json.loads(probe.stdout or "{}")
+            streams = meta.get("streams", [])
+            video = next((s for s in streams if s.get("codec_type") == "video"), None)
+            if video is None:
+                return fail("This link has no video track; VisioVox needs to see the speakers.")
+            duration_s = float(meta.get("format", {}).get("duration") or 0)
+            if duration_s <= 0:
+                return fail("The downloaded video could not be read.")
+
+            _s3_client(settings).upload_file(
+                str(source),
+                settings.s3_bucket,
+                project.source_key,
+                ExtraArgs={"ContentType": "video/mp4"},
+            )
+            title = str(info.get("title") or "").strip()
+            row.source_title = title[:300] or None
+            if title and project.title == "Imported video":
+                project.title = title[:200]
+            project.source_bytes = source.stat().st_size
+            project.duration_ms = round(duration_s * 1000)
+            project.width = video.get("width")
+            project.height = video.get("height")
+            row.status = "ready"
+            row.progress = 100
+            row.finished_at = _now()
+            session.commit()
+            return {"status": "ready", "import_id": import_id, "seconds": duration_s}
+        finally:
+            shutil.rmtree(work, ignore_errors=True)

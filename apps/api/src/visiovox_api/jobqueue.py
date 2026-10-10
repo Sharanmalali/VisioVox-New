@@ -56,6 +56,13 @@ def enqueue_mock(job_id: str) -> None:
     _producer().send_task(MOCK_PIPELINE_TASK, args=[job_id])
 
 
+IMPORT_TASK = "visiovox.import_media"
+
+
+def enqueue_import(import_id: str) -> None:
+    _producer().send_task(IMPORT_TASK, args=[import_id], queue=GPU_QUEUE)
+
+
 def enqueue_export(export_id: str) -> None:
     _producer().send_task(RENDER_EXPORT_TASK, args=[export_id], queue=GPU_QUEUE)
 

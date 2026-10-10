@@ -77,6 +77,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/hls/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Playlist */
+        get: operations["playlist_v1_hls__key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Import */
+        post: operations["start_import_v1_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/limits": {
         parameters: {
             query?: never;
@@ -265,6 +299,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/projects/{project_id}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Import */
+        get: operations["get_import_v1_projects__project_id__import_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects/{project_id}/job": {
         parameters: {
             query?: never;
@@ -296,6 +347,26 @@ export interface paths {
         get: operations["get_manifest_v1_projects__project_id__manifest_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/projects/{project_id}/process": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Process Part
+         * @description Start processing an imported recording, optionally only part of it.
+         */
+        post: operations["process_part_v1_projects__project_id__process_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -722,6 +793,51 @@ export interface components {
             /** Status */
             status: string;
         };
+        /**
+         * ImportRequest
+         * @description Like creating a project, from a link; the title defaults to the video's.
+         */
+        ImportRequest: {
+            /**
+             * Language
+             * @description Spoken language for captions, a code from /v1/limits `caption_languages`; omit or null to detect automatically
+             */
+            language?: string | null;
+            /**
+             * Rights Attested
+             * @description User confirms they may process this recording
+             */
+            rights_attested: boolean;
+            /** Title */
+            title?: string | null;
+            /**
+             * Url
+             * @description A YouTube or Vimeo link
+             */
+            url: string;
+        };
+        /** ImportResponse */
+        ImportResponse: {
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Preview Url */
+            preview_url?: string | null;
+            /** Progress */
+            progress: number;
+            /** Project Id */
+            project_id: string;
+            /** Source Title */
+            source_title?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "downloading" | "ready" | "failed";
+            /** Url */
+            url: string;
+        };
         /** JobResponse */
         JobResponse: {
             /** Error Code */
@@ -796,6 +912,16 @@ export interface components {
             };
             /** Reserved Bytes */
             reserved_bytes: number;
+        };
+        /**
+         * ProcessRequest
+         * @description The part to process, in milliseconds of the source; omit for all of it.
+         */
+        ProcessRequest: {
+            /** End Ms */
+            end_ms?: number | null;
+            /** Start Ms */
+            start_ms?: number | null;
         };
         /** ProjectListResponse */
         ProjectListResponse: {
@@ -1289,6 +1415,109 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    playlist_v1_hls__key__get: {
+        parameters: {
+            query: {
+                exp: number;
+                sig: string;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_import_v1_imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResponse"];
                 };
             };
             /** @description Unauthorized */
@@ -1973,6 +2202,55 @@ export interface operations {
             };
         };
     };
+    get_import_v1_projects__project_id__import_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     get_job_v1_projects__project_id__job_get: {
         parameters: {
             query?: never;
@@ -2041,6 +2319,61 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    process_part_v1_projects__project_id__process_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProcessRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
                     };
                 };
             };

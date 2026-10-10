@@ -453,6 +453,120 @@
         "title": "ExportResponse",
         "type": "object"
       },
+      "ImportRequest": {
+        "additionalProperties": false,
+        "description": "Like creating a project, from a link; the title defaults to the video's.",
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Spoken language for captions, a code from /v1/limits `caption_languages`; omit or null to detect automatically",
+            "title": "Language"
+          },
+          "rights_attested": {
+            "description": "User confirms they may process this recording",
+            "title": "Rights Attested",
+            "type": "boolean"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "url": {
+            "description": "A YouTube or Vimeo link",
+            "maxLength": 500,
+            "minLength": 8,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": ["rights_attested", "url"],
+        "title": "ImportRequest",
+        "type": "object"
+      },
+      "ImportResponse": {
+        "properties": {
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "preview_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Url"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "integer"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "source_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Title"
+          },
+          "status": {
+            "enum": ["queued", "downloading", "ready", "failed"],
+            "title": "Status",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": ["project_id", "url", "status", "progress"],
+        "title": "ImportResponse",
+        "type": "object"
+      },
       "JobResponse": {
         "properties": {
           "error_code": {
@@ -626,6 +740,38 @@
           "caption_languages"
         ],
         "title": "LimitsResponse",
+        "type": "object"
+      },
+      "ProcessRequest": {
+        "additionalProperties": false,
+        "description": "The part to process, in milliseconds of the source; omit for all of it.",
+        "properties": {
+          "end_ms": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Ms"
+          },
+          "start_ms": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Ms"
+          }
+        },
+        "title": "ProcessRequest",
         "type": "object"
       },
       "ProjectListResponse": {
@@ -1664,6 +1810,141 @@
         "tags": ["auth"]
       }
     },
+    "/v1/hls/{key}": {
+      "get": {
+        "operationId": "playlist_v1_hls__key__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "exp",
+            "required": true,
+            "schema": {
+              "title": "Exp",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sig",
+            "required": true,
+            "schema": {
+              "title": "Sig",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Playlist",
+        "tags": ["media"]
+      }
+    },
+    "/v1/imports": {
+      "post": {
+        "operationId": "start_import_v1_imports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Start Import",
+        "tags": ["imports"]
+      }
+    },
     "/v1/limits": {
       "get": {
         "description": "What this account may upload right now, and why.\n\nThe upload screen shows these numbers before a file is chosen (docs/28 \u00a7D2).\nThey move with free space and with other uploads in flight, so they are\ncomputed per request rather than read from configuration.",
@@ -2518,6 +2799,67 @@
         "tags": ["exports"]
       }
     },
+    "/v1/projects/{project_id}/import": {
+      "get": {
+        "operationId": "get_import_v1_projects__project_id__import_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Import",
+        "tags": ["imports"]
+      }
+    },
     "/v1/projects/{project_id}/job": {
       "get": {
         "operationId": "get_job_v1_projects__project_id__job_get",
@@ -2641,6 +2983,82 @@
         },
         "summary": "Get Manifest",
         "tags": ["media"]
+      }
+    },
+    "/v1/projects/{project_id}/process": {
+      "post": {
+        "description": "Start processing an imported recording, optionally only part of it.",
+        "operationId": "process_part_v1_projects__project_id__process_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProcessRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Process Part V1 Projects  Project Id  Process Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Process Part",
+        "tags": ["imports"]
       }
     },
     "/v1/projects/{project_id}/shares": {

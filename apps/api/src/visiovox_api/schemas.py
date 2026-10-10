@@ -432,3 +432,29 @@ class StudySessionResponse(BaseModel):
     participant: str
     created_at: dt.datetime
     data: dict[str, Any]
+
+
+class ImportRequest(CreateProjectRequest):
+    """Like creating a project, from a link; the title defaults to the video's."""
+
+    title: Title | None = None  # type: ignore[assignment]
+    url: str = Field(min_length=8, max_length=500, description="A YouTube or Vimeo link")
+
+
+class ImportResponse(BaseModel):
+    project_id: str
+    url: str
+    status: Literal["queued", "downloading", "ready", "failed"]
+    progress: int
+    source_title: str | None = None
+    error: str | None = None
+    duration_ms: int | None = None
+    # The downloaded video, for choosing the part to process.
+    preview_url: str | None = None
+
+
+class ProcessRequest(StrictModel):
+    """The part to process, in milliseconds of the source; omit for all of it."""
+
+    start_ms: int | None = Field(default=None, ge=0)
+    end_ms: int | None = Field(default=None, ge=1)

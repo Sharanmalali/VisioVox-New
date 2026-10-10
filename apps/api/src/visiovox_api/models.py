@@ -142,6 +142,10 @@ class Project(Base):
         JSONB, nullable=False, server_default="{}"
     )
 
+    # The part of the source to process, when only part was chosen (imports).
+    trim_start_ms: Mapped[int | None] = mapped_column(Integer)
+    trim_end_ms: Mapped[int | None] = mapped_column(Integer)
+
     speaker_count: Mapped[int | None] = mapped_column(Integer)
     overlap_ratio: Mapped[float | None] = mapped_column(Float)
     difficulty: Mapped[str | None] = mapped_column(Text)
@@ -581,3 +585,32 @@ class StudySession(Base):
     created_at: Mapped[dt.datetime] = _now_col()
 
     __table_args__ = (Index("uq_study_participant", "user_id", "participant", unique=True),)
+
+
+class MediaImport(Base):
+    """A recording fetched from a link (YouTube, Vimeo) instead of uploaded."""
+
+    __tablename__ = "media_imports"
+
+    id: Mapped[str] = _pk("imp")
+    project_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    user_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    source_title: Mapped[str | None] = mapped_column(Text)
+    error_detail: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _now_col()
+    finished_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        CheckConstraint(
+            _in_list("status", ("queued", "downloading", "ready", "failed")),
+            name="media_imports_status_check",
+        ),
+        CheckConstraint("progress BETWEEN 0 AND 100", name="media_imports_progress_check"),
+    )
