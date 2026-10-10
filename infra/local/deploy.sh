@@ -205,8 +205,27 @@ done
 
 say "GPU worker (runs on the host, not in compose)"
 if systemctl cat visiovox-worker-gpu >/dev/null 2>&1; then
-  # Restarted every deploy so it picks up a regenerated .env.worker. A running
-  # job is allowed to finish first (TimeoutStopSec in the unit).
+  # Restarted every deploy so it picks up a regenerated .env.worker - but only
+  # once it is idle. systemd stops every process in the unit at once, so a
+  # restart mid-job killed a 17-minute job (2026-10-10). Waits up to an hour,
+  # reporting what it waits for; the queue holds new jobs meanwhile.
+  waited=0
+  while :; do
+    busy=$(uv run --quiet celery -A worker_gpu.tasks:celery_app inspect active --json --timeout 5 2>/dev/null \
+      | python3 -c 'import json,sys
+try:
+    d = json.loads(sys.stdin.read() or "{}")
+except ValueError:
+    d = {}
+print(sum(len(v or []) for v in d.values()))' 2>/dev/null || echo 0)
+    [[ "${busy:-0}" == "0" ]] && break
+    if (( waited >= 3600 )); then
+      echo "  still busy after an hour - restarting anyway; the job is requeued"
+      break
+    fi
+    (( waited % 60 == 0 )) && echo "  waiting for ${busy} running job(s) to finish before restarting the worker..."
+    sleep 15; waited=$(( waited + 15 ))
+  done
   if sudo -n systemctl restart visiovox-worker-gpu 2>/dev/null; then
     echo "  restarted"
   else

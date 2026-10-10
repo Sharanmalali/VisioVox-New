@@ -232,6 +232,7 @@ def run_pipeline(
 
             facts = sandbox.facts_from(sandbox.probe(staged, image=settings.media_sandbox_image))
             sandbox.assert_admissible(facts, max_duration_seconds=settings.max_duration_seconds)
+            runner.record_duration(round(facts.duration_seconds * 1000))
 
             media, s0 = s0_ingest.ingest(staged, work / "media")
             for w in s0.warnings:

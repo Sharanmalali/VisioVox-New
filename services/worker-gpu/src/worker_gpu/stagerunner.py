@@ -101,6 +101,17 @@ class StageRunner:
         self.report = RunReport()
         self._on_progress = on_progress
 
+    def record_duration(self, duration_ms: int) -> None:
+        """The recording's real length, as soon as it is known.
+
+        The time-left estimate is sized by it; until now the project carried
+        only what the upload claimed (or nothing), and a 32-second clip was
+        estimated as if it ran ten minutes.
+        """
+        if duration_ms > 0 and self.job.project is not None:
+            self.job.project.duration_ms = duration_ms
+            self.session.commit()
+
     def _emit(self, payload: dict[str, Any]) -> None:
         publish(self.redis_url, self.job.id, payload)
         if self._on_progress:

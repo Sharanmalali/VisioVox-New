@@ -57,6 +57,9 @@ celery_app.conf.update(
     # A worker dying mid-stage must not lose the job; stage rows make the retry
     # resume rather than restart.
     task_acks_late=True,
+    # ...and a worker killed outright (a deploy restart) returns the job to the
+    # queue instead of acknowledging it: acks_late alone lost a 17-minute job.
+    task_reject_on_worker_lost=True,
     # One long job at a time, and no hoarding the queue while it runs.
     worker_prefetch_multiplier=1,
     worker_concurrency=1,

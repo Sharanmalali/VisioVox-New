@@ -363,8 +363,11 @@ async def upload_complete(
 
     project.source_bytes = size
     project.status = "queued"
-    # Phase 2 has no probe stage yet; the mock uses this as its timeline length.
-    project.duration_ms = project.duration_ms or 600_000
+    # The mock pipeline uses this as its timeline length. A real job learns the
+    # length at ingest (StageRunner.record_duration); a placeholder here made the
+    # time-left estimate size a 32-second clip as ten minutes.
+    if settings.pipeline_mode != "real":
+        project.duration_ms = project.duration_ms or 600_000
 
     job = Job(
         project_id=project.id,
