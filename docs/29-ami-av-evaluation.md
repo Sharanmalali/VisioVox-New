@@ -341,3 +341,47 @@ The tables above are a full rerun with the fix (commits 3acaa54, c93074c).
   source ("you you the in") sometimes comes back as broken target text.
 - **Naturalness and listener preference.** These need listeners. They belong
   in the user study (docs/user-study), not in this benchmark.
+
+## 12. Follow-up: filling off-screen speech (2026-10-10, rejected)
+
+A person's speech while their face is not tracked is missing from their
+track: 14.4 % of all speech, §2. They may be turned away, off screen or
+hidden behind someone. `scripts/bench_ami_offscreen_fill.py` tests the
+direct fixes, with no new model, on the cached AMI-AV windows. The rule is
+chosen on the 20 fitting meetings and reported on the 10 held-out ones.
+
+The three fills:
+- **Diarization-guided.** Face-anchored diarization (§9) says when each
+  person speaks, faces or not. Where it says person k speaks and k is not
+  visible, k's track takes the recording, at its own level with 20 ms fades.
+  The fill is applied either only where k is the sole speaker ("solo") or
+  wherever k speaks ("any").
+- **Voice-verified.** The diarization-guided fill, piece by piece (up to
+  4 s), kept only where the piece's voice is closest to k's and at least τ
+  similar. The voices are ECAPA embeddings, the embedder S3 already uses. Each
+  person's voice is enrolled from the recording where their face is visible
+  and they alone are diarized as speaking.
+
+| Fill, against the headsets | Precision (fitting / held-out) | Hidden speech recovered (fitting / held-out) |
+|---|---|---|
+| Diarization, k the only speaker | 0.27 / 0.38 | 16 % / 2 % |
+| Diarization, k speaking at all | 0.38 / 0.62 | 36 % / 8 % |
+| Voice-verified (best τ) | 0.10 / 0.00 | 1 % / 0 % |
+
+Precision is the share of filled time in which k really speaks. At best,
+three filled seconds in five carry someone else's voice into k's track, and
+a twelfth of k's hidden speech comes back. The mean whole-clip SI-SDRi change
+is positive (+0.4 dB fitting, +2.1 dB held-out). It rests on two to five
+seats, though, because few reliable speakers have a second or more of hidden
+speech in a 120 s window, so it is not evidence.
+
+The voice check made precision worse, not better. When the hidden piece's
+voice is closest to k's, it is still mostly not k: voices enrolled from
+short, often overlapped stretches of a meeting do not tell its people apart.
+This is the same weakness as the 0.53 enrolment cosine in §4.
+
+**Not deployed.** A track that is sometimes another person is worse than a
+track that is quiet while its person is out of sight. Their words are still
+in the original mix, which the player offers beside every speaker. Like §5
+and §8, this points to a visual active-speaker decision, or a second camera,
+not to more audio heuristics.

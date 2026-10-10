@@ -1135,7 +1135,7 @@ def dub_project(self: Any, dub_id: str) -> dict[str, Any]:
 
         row.stats = {
             **s12_dub.fit_stats(placements),
-            "voices": {str(o): v.name for o, v in voices.items()},
+            "voices": {str(o): v.label or v.name for o, v in voices.items()},
             "synthesis_s": round(float(synth.get("seconds", 0.0)), 1),
             "speech_s": round(float(synth.get("speech_s", 0.0)), 1),
         }

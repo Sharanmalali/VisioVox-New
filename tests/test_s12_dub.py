@@ -125,3 +125,11 @@ def test_lines_are_placed_at_their_speaker_s_level_without_clipping() -> None:
     assert out[1500] == pytest.approx(0.6)  # both
     loud = assemble(background, placements, audio, {1: 0.9, 2: 0.9}, rate)
     assert float(np.max(np.abs(loud))) <= 0.95 + 1e-6
+
+
+def test_a_reused_voice_is_labelled_with_its_pitch() -> None:
+    voices = assign_voices("hi", list(range(1, 9)))
+    labels = [voices[o].label for o in range(1, 9)]
+    assert labels[:4] == ["Rohit", "Divya", "Aman", "Rani"]
+    assert labels[4] == "Rohit (a slightly higher pitch)"
+    assert len(set(labels)) == 8, "every speaker reads differently in the panel"

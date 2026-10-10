@@ -58,6 +58,10 @@ PITCHES = ("", "a slightly higher pitch", "a slightly lower pitch", "a higher pi
 class Voice:
     name: str
     description: str
+    # What the dub panel shows: the name, and the pitch when a language has
+    # fewer voices than speakers and a name is used twice (Hindi and Kannada
+    # have four each; an eight-person debate read "voiced by Suresh" twice).
+    label: str = ""
 
 
 def assign_voices(language: str, ordinals: Sequence[int]) -> dict[int, Voice]:
@@ -70,6 +74,7 @@ def assign_voices(language: str, ordinals: Sequence[int]) -> dict[int, Voice]:
         tone = f" with {pitch}" if pitch else ""
         out[ordinal] = Voice(
             name=name,
+            label=f"{name} ({pitch})" if pitch else name,
             description=(
                 f"{name} speaks at a fast pace{tone}, in a close-sounding recording "
                 "with very clear audio and very little background noise."

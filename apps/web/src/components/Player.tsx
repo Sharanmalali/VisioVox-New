@@ -537,12 +537,20 @@ function SpeakerRail({
             </span>
           )}
           <span className="rail-label">{nameOf(speaker.ordinal)}</span>
-          <span className="rail-meta muted">
+          <span
+            className="rail-meta muted"
+            title={
+              (speaker.modality === 'audio_only'
+                ? 'Separated from the voice alone: no face was found for this person.'
+                : "Separated by following this person's face and lip movements together with their voice.") +
+              ` Heard in ${String(Math.round(speaker.speaking_ratio * 100))}% of the recording.`
+            }
+          >
             {nameOf(speaker.ordinal) !== `Speaker ${String(speaker.ordinal)}`
               ? `Speaker ${String(speaker.ordinal)} · `
               : ''}
-            {String(Math.round(speaker.speaking_ratio * 100))}% ·{' '}
-            {speaker.modality === 'audio_only' ? 'no face' : 'face + voice'}
+            heard {String(Math.round(speaker.speaking_ratio * 100))}% ·{' '}
+            {speaker.modality === 'audio_only' ? 'voice only' : 'face + voice'}
           </span>
         </button>
       ))}

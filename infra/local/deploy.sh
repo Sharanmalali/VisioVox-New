@@ -211,14 +211,19 @@ if systemctl cat visiovox-worker-gpu >/dev/null 2>&1; then
   # reporting what it waits for; the queue holds new jobs meanwhile.
   waited=0
   while :; do
-    busy=$(uv run --quiet celery -A worker_gpu.tasks:celery_app inspect active --json --timeout 5 2>/dev/null \
+    # With the worker's own settings (the broker is only known there) and a
+    # hard limit: without them the query hung on an unreachable broker and the
+    # deploy waited for an idle worker for ever. No answer counts as idle - a
+    # worker that cannot answer cannot be running a job worth waiting for.
+    busy=$( (set -a; . ./.env.production; . ./.env.worker; set +a
+             timeout 20 uv run --quiet celery -A worker_gpu.tasks:celery_app inspect active --json --timeout 5) 2>/dev/null \
       | python3 -c 'import json,sys
 try:
     d = json.loads(sys.stdin.read() or "{}")
 except ValueError:
     d = {}
-print(sum(len(v or []) for v in d.values()))' 2>/dev/null || echo 0)
-    [[ "${busy:-0}" == "0" ]] && break
+print(sum(len(v or []) for v in d.values()))' 2>/dev/null | tail -n 1 | tr -dc '0-9')
+    (( ${busy:-0} == 0 )) && break
     if (( waited >= 3600 )); then
       echo "  still busy after an hour - restarting anyway; the job is requeued"
       break
