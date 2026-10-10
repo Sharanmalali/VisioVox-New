@@ -12,11 +12,11 @@ knows when each stage really started.
 from __future__ import annotations
 
 import datetime as dt
+import statistics
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,19 +59,26 @@ class Model:
 
 
 def fit(points: Sequence[tuple[float, float]]) -> StageModel:
-    """`seconds = fixed + per_second x media` with both terms kept non-negative."""
-    x = np.asarray([p[0] for p in points], dtype=float)
-    y = np.asarray([p[1] for p in points], dtype=float)
-    if len(points) < MIN_POINTS or np.ptp(x) == 0:
-        rate = float(np.median(y / np.maximum(x, 1.0)))
-        return StageModel(0.0, rate)
-    a = np.stack([np.ones_like(x), x], axis=1)
-    (fixed, per_second), *_ = np.linalg.lstsq(a, y, rcond=None)
+    """`seconds = fixed + per_second x media` with both terms kept non-negative.
+
+    Plain least squares in closed form: the API image carries no numpy (a
+    deploy that imported it here crash-looped the API).
+    """
+    x = [p[0] for p in points]
+    y = [p[1] for p in points]
+    if len(points) < MIN_POINTS or max(x) == min(x):
+        return StageModel(0.0, statistics.median(b / max(a, 1.0) for a, b in points))
+    n = len(points)
+    sx, sy = sum(x), sum(y)
+    sxx = sum(v * v for v in x)
+    sxy = sum(a * b for a, b in points)
+    per_second = (n * sxy - sx * sy) / (n * sxx - sx * sx)
+    fixed = (sy - per_second * sx) / n
     if per_second < 0:
-        return StageModel(float(np.median(y)), 0.0)
+        return StageModel(statistics.median(y), 0.0)
     if fixed < 0:
-        return StageModel(0.0, float(np.sum(x * y) / np.sum(x * x)))
-    return StageModel(float(fixed), float(per_second))
+        return StageModel(0.0, sxy / sxx)
+    return StageModel(fixed, per_second)
 
 
 def build(rows: Sequence[tuple[str, int, str, float, float]]) -> Model:
