@@ -299,7 +299,11 @@ def package(
             photo = out_dir / f"spk_{track.ordinal}_face.jpg"
             try:
                 made = bool(track.faces) and write_card_photo(
-                    picture, track.faces or [], video_size, photo
+                    picture,
+                    track.faces or [],
+                    video_size,
+                    photo,
+                    others=[t.faces or [] for t in tracks if t is not track],
                 )
             except Exception:  # a card photo must never cost the project
                 made = False

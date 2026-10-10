@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.face_card import HEIGHT, WIDTH, best_box, crop_rect, write_card_photo
+from pipeline.face_card import (
+    HEIGHT,
+    WIDTH,
+    best_box,
+    crop_rect,
+    horizontal_room,
+    write_card_photo,
+)
 
 
 def test_the_largest_usable_face_is_chosen() -> None:
@@ -53,3 +60,14 @@ def test_a_photo_is_cut_from_the_video(tmp_path: Path) -> None:
     )  # fmt: skip
     assert probe.stdout.strip() == f"{WIDTH},{HEIGHT}"
     assert not write_card_photo(video, [], (640, 360), tmp_path / "none.jpg")
+
+
+def test_a_close_up_crop_does_not_take_in_the_next_person() -> None:
+    # The split-screen interview that exposed it: face boxes as S5 recorded them.
+    left = [16440, 0.272, 0.553, 0.196, 0.346]
+    right = [[16400, 0.723, 0.58, 0.203, 0.357]]
+    room = horizontal_room(left, [right])
+    w, _, x, _ = crop_rect(left, 1270, 720, room=room)
+    assert x + w <= (0.723 - 0.203) * 1270 + 1, "stops at the other face's edge"
+    # A face elsewhere in time does not narrow it.
+    assert horizontal_room(left, [[[90_000, 0.723, 0.58, 0.203, 0.357]]]) == (0.0, 1.0)

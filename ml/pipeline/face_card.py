@@ -16,8 +16,14 @@ from pathlib import Path
 
 WIDTH, HEIGHT = 320, 200
 # The crop is this many face-heights tall: the head with room above it and the
-# shoulders below, so a face does not fill the card edge to edge.
-FACE_HEIGHTS = 2.4
+# shoulders below, so a face does not fill the card edge to edge...
+FACE_HEIGHTS = 2.0
+# ...but never wider than this many face-widths...
+MAX_FACE_WIDTHS = 2.6
+# ...and never reaching another person's face on screen at that moment (a
+# split-screen interview gave each card both faces). Faces count as "at that
+# moment" within this much of the chosen frame.
+NEIGHBOUR_MS = 500
 # Faces narrower than this share of the frame are too small to recognise.
 MIN_FACE = 0.03
 
@@ -30,12 +36,42 @@ def best_box(boxes: Sequence[Sequence[float]]) -> list[float] | None:
     return max(usable, key=lambda b: b[3] * b[4])
 
 
-def crop_rect(box: Sequence[float], width: int, height: int) -> tuple[int, int, int, int]:
+def horizontal_room(
+    box: Sequence[float], others: Sequence[Sequence[Sequence[float]]]
+) -> tuple[float, float]:
+    """(left, right) frame fractions the crop may span without reaching another
+    person's face shown within NEIGHBOUR_MS of `box`."""
+    ms, cx = box[0], box[1]
+    left, right = 0.0, 1.0
+    for person in others:
+        near = [b for b in person if len(b) >= 5 and abs(b[0] - ms) <= NEIGHBOUR_MS]
+        if not near:
+            continue
+        o = min(near, key=lambda b: abs(b[0] - ms))
+        if o[1] > cx:
+            right = min(right, o[1] - o[3])
+        else:
+            left = max(left, o[1] + o[3])
+    return left, right
+
+
+def crop_rect(
+    box: Sequence[float], width: int, height: int, room: tuple[float, float] = (0.0, 1.0)
+) -> tuple[int, int, int, int]:
     """(w, h, x, y) in pixels: a 16:10 head-and-shoulders crop around the face,
-    kept inside the frame (shifted, then shrunk if the frame is too small)."""
-    _, cx, cy, _, hh = box
+    kept inside the frame (shifted, then shrunk if the frame is too small) and
+    inside `room`, the span clear of other faces, centred on this one."""
+    _, cx, cy, hw, hh = box
     h = 2 * hh * height * FACE_HEIGHTS
     w = h * WIDTH / HEIGHT
+    widest = min(
+        2 * hw * width * MAX_FACE_WIDTHS,
+        2 * max(0.0, min(cx - room[0], room[1] - cx)) * width if room != (0.0, 1.0) else width,
+    )
+    # Never narrower than the face itself: better a neighbour's edge than half a face.
+    widest = max(widest, 2 * hw * width)
+    if w > widest:
+        w, h = widest, widest * HEIGHT / WIDTH
     scale = min(1.0, width / w, height / h)
     w, h = w * scale, h * scale
     # A little more room above the face than below it.
@@ -48,14 +84,20 @@ def crop_rect(box: Sequence[float], width: int, height: int) -> tuple[int, int, 
 
 
 def write_card_photo(
-    video: Path, boxes: Sequence[Sequence[float]], size: tuple[int, int], dest: Path
+    video: Path,
+    boxes: Sequence[Sequence[float]],
+    size: tuple[int, int],
+    dest: Path,
+    others: Sequence[Sequence[Sequence[float]]] = (),
 ) -> bool:
-    """Cut the card photo into `dest` (JPEG). False if there is no usable face."""
+    """Cut the card photo into `dest` (JPEG). False if there is no usable face.
+
+    `others` are the other people's face boxes, kept out of the crop."""
     box = best_box(boxes)
     ffmpeg = shutil.which("ffmpeg")
     if box is None or ffmpeg is None or not video.is_file():
         return False
-    w, h, x, y = crop_rect(box, *size)
+    w, h, x, y = crop_rect(box, *size, room=horizontal_room(box, others))
     proc = subprocess.run(  # noqa: S603 - fixed argv, shell=False
         [
             ffmpeg,

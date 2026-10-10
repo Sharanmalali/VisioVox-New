@@ -9,6 +9,7 @@ speaker whose stored manifest has none (visiovox_api.photos).
 Projects packaged before face boxes were kept (2026-10-09) have nothing to
 cut from and are skipped.
 
+    set -a; . ./.env.production; . ./.env.worker; set +a   # the worker's environment
     uv run python scripts/backfill_card_photos.py [--dry-run]
 """
 
@@ -60,22 +61,25 @@ def main() -> int:
         size = frame_size(video) if video.is_file() else None
         if size is None:
             continue
+        everyone: dict[str, list[list[float]]] = {}
         for captions in sorted(project.glob("spk_*.json")):
-            ordinal = captions.stem.split("_")[1]
-            photo = project / f"spk_{ordinal}_face.jpg"
-            if photo.is_file():
-                continue
             try:
-                boxes = json.loads(captions.read_text()).get("faces", {}).get("boxes", [])
+                body = json.loads(captions.read_text())
+                everyone[captions.stem.split("_")[1]] = body.get("faces", {}).get("boxes", [])
             except (json.JSONDecodeError, AttributeError):
-                boxes = []
+                everyone[captions.stem.split("_")[1]] = []
+        for ordinal, boxes in everyone.items():
+            photo = project / f"spk_{ordinal}_face.jpg"
+            others = [b for o, b in everyone.items() if o != ordinal]
             if not boxes:
                 skipped += 1
                 continue
             if args.dry_run:
                 made += 1
                 continue
-            if write_card_photo(video, boxes, size, photo):
+            # Already cut on an earlier run: upload again rather than skip, so a
+            # run interrupted between cutting and uploading still completes.
+            if photo.is_file() or write_card_photo(video, boxes, size, photo, others=others):
                 client.upload_file(  # type: ignore[union-attr]
                     str(photo),
                     settings.s3_bucket,
