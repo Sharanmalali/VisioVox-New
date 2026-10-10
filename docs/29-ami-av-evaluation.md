@@ -225,3 +225,119 @@ bounds list lengths and an unanswerable part is halved (ADR-0021), and the
 matcher removes role names because AMI writes the owner into the sentence
 while the product states it separately. Cached outputs were cleared and all
 30 meetings rerun after both. No prompt was tuned on these meetings.
+
+## 11. Follow-up: per-speaker dubbing (2026-10-10, deployed)
+
+The project page can dub a recording into another language (ADR-0024). Each
+speaker gets their own synthetic voice from Indic Parler-TTS, and the line is
+placed where they said it. The room is the mixture minus the separated voices
+being replaced. `scripts/bench_ami_dub.py` measures the deployed code on the
+same 30 meetings and 120 s windows as §2, reusing their cached separation,
+with no constant tuned. It asks three questions.
+
+**Leakage: how much of each original voice is left under the dub?** The room
+is built exactly as the worker builds it: the mixture minus the production
+AV-MossFormer2 tracks, with gains by least squares. It is scored against each
+participant's equalised headset on the 81 reliable seats (§1's rule; 39 of
+120 seats unreliable). Two reliable seats had no track, so their voice is
+not removed at all; they are counted, and the means below are over the 79
+with a track.
+
+| Where (79 seats) | Original voice in the room vs. the mixture |
+|---|---|
+| Frames where they speak (energy along their own headset) | **-16.5 dB** |
+| ... and someone else speaks too | -13.3 dB |
+| Total level of the room in frames where only they speak | -8.6 dB (median -8.1; 10th-90th percentile -12.1 to -3.5) |
+
+The figure along their own headset is the one that matters. In their own
+stretches, under a dub voice placed at their level, about 2 % of their voice's
+energy remains. The total level drops less: everything else that is in the
+room while they speak - their voice in the other headsets (crosstalk) and
+separation error - stays. Train and eval meetings agree: -16.7 and -16.3 dB
+along the headset. The AMI-AV mixture is the sum of the headsets and has no
+ambience of its own, so whether the room's *other* sounds survive cannot be
+measured here.
+
+**Fit: does the dub stay in time?**
+- **Lines.** AMI's hand-aligned words per participant, split at pauses of
+  0.5 s or more, after sentence-final punctuation once a line has 4 words, or
+  at 25 words. That gives 1,467 lines.
+- **Fillers** (um, uh, mm) are dropped, as Whisper usually drops them.
+- **Processing.** Translated by the deployed NLLB, voiced by the deployed
+  runner, placed by `s12_dub.plan`.
+- **Control.** English re-voicing needs no translation, so it isolates the
+  synthetic voice's own pace.
+
+| 1,467 lines | Hindi | Kannada | English (control) |
+|---|---|---|---|
+| Fit as spoken | 78 % | 74 % | 81 % |
+| Sped up to fit (mean tempo) | 22 % (1.05) | 26 % (1.06) | 19 % (1.05) |
+| Start late (> 0.3 s) | 4.9 % | 6.8 % | 3.9 % |
+| ... median / largest lag | 0.97 s / 3.8 s | 0.84 s / 5.9 s | 0.70 s / 4.6 s |
+| Dub speech / original line length | 1.06 | 1.14 | 1.03 |
+| Synthesis time / speech (A5000, batch 8) | 1.12 | 1.03 | 0.93 |
+
+Meetings fit far better than the stand-up clip that first exposed the
+problem. That clip was a continuous monologue with 53 % of lines late
+(ADR-0024). Meetings have pauses, which absorb the lag. Hindi needs barely
+more time than the English control. Kannada needs 14 % more than the original
+lines, which shows in its larger lags.
+
+**Intelligibility: does the voice say the words?**
+- **Method.** Whisper large-v3 transcribes every voiced line with the
+  language forced. CER is measured against the text the voice was given.
+  Whisper's own language identification (not forced) is reported alongside.
+- **What CER includes.** Whisper's own errors on Indian languages are part of
+  these numbers, so CER is an upper bound on the voice's errors. The English
+  control shows the floor this method reaches when the recogniser is strong.
+
+| Language | Lines | Median CER | CER < 10 % | Lines of >= 10 words: median CER, language ID |
+|---|---|---|---|---|
+| Hindi | 1,467 | 0.047 | 66 % | 0.059, 98 % |
+| Kannada | 1,467 | 0.143 | 34 % | 0.108, 89 % |
+| English (control) | 1,467 | 0.000 | 73 % | 0.040, 99 % |
+| Bengali | 60 | 0.188 | 15 % | - |
+| Tamil | 60 | 0.140 | 42 % | - |
+| Telugu | 60 | 0.130 | 33 % | - |
+| Marathi | 60 | 0.172 | 28 % | - |
+
+- **Short lines drive the means.** Means are higher than medians (Hindi 0.17,
+  Kannada 0.29, English 0.11), and the gap comes from lines of one or two
+  words: "हाँ.", "Okay.".
+- **Language ID on short lines.** Whisper names the language of those in only
+  19 % of Hindi and 3 % of Kannada cases, against 83 % for English. A single
+  word is too little for it to tell Kannada from its neighbours.
+- **Long lines.** On lines of ten words or more, Whisper identifies Hindi
+  (98 %) and Kannada (89 %) reliably.
+- **Marathi.** Its language ID (37 %) mostly fails because Whisper takes
+  Devanagari Marathi for Hindi.
+
+**Two defects found and fixed by this benchmark.** The first full run found
+two failures on short prompts:
+
+1. **Babble.** Indic Parler-TTS sometimes keeps talking for seconds after a
+   one-word line.
+2. **Silence.** It sometimes says nothing at all. Whisper heard nothing in
+   63, 77 and 80 lines of Hindi, Kannada and English; their median length was
+   0 ms. In the product such a line simply vanished from the dub, while the
+   speaker's own voice had been removed from the room.
+
+The runner now checks each take against the text's length
+(`run_tts.limit_ms` / `floor_ms`). Bad takes are generated again with other
+seeds. A take still too long is cut; one still too short keeps its longest
+take.
+
+The tables above are a full rerun with the fix (commits 3acaa54, c93074c).
+
+| Effect of the fix (Hindi / Kannada / English) | First run | With the fix |
+|---|---|---|
+| Lines Whisper heard nothing in | 63 / 77 / 80 | 5 / 7 / 2 |
+| Mean CER | 0.240 / 0.337 / 0.164 | 0.174 / 0.292 / 0.108 |
+| Lines retried long / short | - | 174/64, 127/83, 125/74 |
+| Lines still too long (cut) / too short | - | 12/8, 2/4, 11/1 |
+
+**Not measured.**
+- **Translation quality.** NLLB's output is taken as given. AMI's disfluent
+  source ("you you the in") sometimes comes back as broken target text.
+- **Naturalness and listener preference.** These need listeners. They belong
+  in the user study (docs/user-study), not in this benchmark.

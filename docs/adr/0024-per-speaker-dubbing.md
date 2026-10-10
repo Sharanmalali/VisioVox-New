@@ -98,6 +98,25 @@ voice spoke twice at once. Measured causes and fixes (same 15 lines):
 - **Not done.** Condensing the translation to fit was left out on purpose. It
   would change what people said.
 
+### On AMI meetings (docs/29 section 11)
+
+`scripts/bench_ami_dub.py` covers the 30 AMI-AV meetings, 1,467 lines per
+language:
+
+- **Leakage.** The original voice is 16.5 dB down under the dub, along each
+  speaker's own headset.
+- **Fit.**
+  - Hindi: 78 % of lines fit as spoken, 22 % sped up, 4.9 % start late
+    (median 0.97 s).
+  - Kannada: 74 % / 26 % / 6.8 %.
+- **Whisper round-trip median CER.** Hindi 0.047, Kannada 0.143, English
+  control 0.000. On lines of ten words or more: 0.059 / 0.108 / 0.040.
+- **Two runner defects found and fixed by it.** On one-word prompts the model
+  sometimes babbled on, and in 2–4 % of lines it produced no audio at all. The
+  runner now regenerates takes that are too long or too short for their text
+  (`limit_ms` / `floor_ms`). That took lines Whisper heard nothing in from
+  63 / 77 / 80 down to 5 / 7 / 2.
+
 ## Consequences
 
 - One more 3.6 GB model on disk (`~/.cache/huggingface`), gated on Hugging
