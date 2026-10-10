@@ -70,6 +70,17 @@ export default function ProjectPage() {
   // Bumped when an import starts processing, to load the new job.
   const [reloads, setReloads] = useState(0);
   const [maxSeconds, setMaxSeconds] = useState<number | null>(null);
+  // An import's own status, which "pending" alone does not tell apart.
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const onImportStatus = useCallback((next: string) => {
+    setImportStatus((previous) => {
+      // The download just finished: reload the project for the video's title.
+      if (next === 'ready' && previous !== null && previous !== 'ready') {
+        setReloads((n) => n + 1);
+      }
+      return next;
+    });
+  }, []);
   const [manifest, setManifest] = useState<Manifest | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Nothing is fetched until the session is restored: opened from the vault
@@ -260,7 +271,14 @@ export default function ProjectPage() {
                     this one comes from a slow poll and would contradict it. */}
                 {(progress === null || TERMINAL.has(progress.status)) &&
                   (() => {
-                    const s = statusMeta(project.status);
+                    const s =
+                      project.status === 'pending' && importStatus !== null
+                        ? importStatus === 'ready'
+                          ? { label: 'Choose the part', tone: 'accent' as const, live: false }
+                          : importStatus === 'failed'
+                            ? { label: 'Import failed', tone: 'danger' as const, live: false }
+                            : { label: 'Downloading', tone: 'accent' as const, live: true }
+                        : statusMeta(project.status);
                     return (
                       <Badge tone={s.tone} dot={s.live ? 'pulse' : true}>
                         {s.label}
@@ -314,6 +332,7 @@ export default function ProjectPage() {
                 onStarted={() => {
                   setReloads((n) => n + 1);
                 }}
+                onStatus={onImportStatus}
               />
             )}
 

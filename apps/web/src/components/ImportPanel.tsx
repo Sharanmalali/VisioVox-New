@@ -30,10 +30,13 @@ export function ImportPanel({
   projectId,
   maxSeconds,
   onStarted,
+  onStatus,
 }: {
   projectId: string;
   maxSeconds: number | null;
   onStarted: () => void;
+  /** Each status as it is seen, so the page header can say what is happening. */
+  onStatus?: (status: ImportResponse['status']) => void;
 }) {
   const [state, setState] = useState<ImportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,8 +46,9 @@ export function ImportPanel({
   const refresh = useCallback(async () => {
     const body = await api().getImport(projectId);
     setState(body);
+    onStatus?.(body.status);
     return body;
-  }, [projectId]);
+  }, [projectId, onStatus]);
 
   useEffect(() => {
     let cancelled = false;
