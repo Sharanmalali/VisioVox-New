@@ -106,15 +106,23 @@ if [[ "$(stat -c %d "$MEDIA_ROOT")" == "$(stat -c %d /)" ]]; then
   die "$MEDIA_ROOT is on the same filesystem as /. The media volume is not mounted."
 fi
 
-# The media volume is a sparse image on a Windows drive, so its own df reports
-# the image's size, not what the drive can still hold. Measure the backing
-# drive when there is one: that is the number that runs out.
+# The media volume is an image file on a Windows drive. A sparse image grows as
+# media is written, so its own df reports the image's size, not what the drive
+# can still hold: then the backing drive is the number that runs out. A fully
+# allocated image cannot grow and its own df is the truth - the drive's free
+# space is irrelevant to it (it once refused a deploy with 194 GB free inside).
 avail=$(df -BG --output=avail "$MEDIA_ROOT" | tail -1 | tr -dc '0-9')
 backing=$(losetup -nO BACK-FILE "$(findmnt -no SOURCE "$MEDIA_ROOT")" 2>/dev/null | head -1 || true)
 if [[ -n "$backing" ]]; then
-  host_avail=$(df -BG --output=avail "$(dirname "$backing")" | tail -1 | tr -dc '0-9')
-  if (( host_avail < avail )); then avail=$host_avail; fi
-  say "Media volume: ${avail} GB free (backing drive of ${backing})"
+  apparent=$(stat -c %s "$backing")
+  allocated=$(( $(stat -c %b "$backing") * $(stat -c %B "$backing") ))
+  if (( allocated < apparent )); then
+    host_avail=$(df -BG --output=avail "$(dirname "$backing")" | tail -1 | tr -dc '0-9')
+    if (( host_avail < avail )); then avail=$host_avail; fi
+    say "Media volume: ${avail} GB free (sparse image; backing drive of ${backing})"
+  else
+    say "Media volume: ${avail} GB free (fully allocated image ${backing})"
+  fi
 else
   say "Media volume: ${avail} GB free"
 fi
