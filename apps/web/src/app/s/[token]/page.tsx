@@ -19,7 +19,13 @@ import { SharePlayer } from '@/components/SharePlayer';
 import { ThemeToggle } from '@/components/shell/ThemeToggle';
 import { ButtonLink } from '@/components/ui';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// This page is rendered on the server, inside the deployment. The public API URL
+// would send that request out to the internet and back through the tunnel -
+// and where outbound HTTPS is intercepted (a campus firewall re-signing
+// certificates), it fails, and every share showed as revoked. The internal
+// address is read at request time; the public one remains the fallback.
+const API =
+  process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 interface SharePayload {
   title: string;

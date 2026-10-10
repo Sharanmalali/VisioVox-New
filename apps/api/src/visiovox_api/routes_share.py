@@ -30,6 +30,7 @@ from .deps import CurrentUser, OwnedProject, SessionDep, SettingsDep
 from .models import Project, ShareLink
 from .ratelimit import RULES, RateLimiter, client_ip, enforce
 from .redis_client import get_redis
+from .routes_media import sign_manifest
 from .schemas import (
     CreateShareRequest,
     ShareListResponse,
@@ -214,6 +215,13 @@ async def open_share(
                 for s in speakers
                 if isinstance(s, dict) and s.get("ordinal") == row.speaker_ordinal
             ]
+        # The master playlist lists every speaker's rendition, so a scoped share
+        # plays through Web Audio, which fetches only the tracks it is given.
+        manifest.pop("master_playlist", None)
+
+    # The bucket has no anonymous access: a share's media links must be signed
+    # exactly as the owner's are, or the page loads and nothing plays.
+    manifest = await sign_manifest(manifest, settings)
 
     return SharePublicResponse(
         title=project.title,

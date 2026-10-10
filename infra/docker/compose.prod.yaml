@@ -175,6 +175,10 @@ services:
         NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:?set it in .env.production}
         NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID:?set it in .env.production}
     <<: *restart
+    environment:
+      # Server-rendered pages (the share page) call the API inside the stack,
+      # never out through the public hostname and back.
+      API_INTERNAL_URL: http://api:8000
     depends_on:
       api: { condition: service_started }
     expose:

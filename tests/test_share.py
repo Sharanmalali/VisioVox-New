@@ -242,3 +242,49 @@ async def test_the_raw_token_is_never_stored(
         rows = (await session.scalars(__import__("sqlalchemy").select(ShareLink))).all()
         assert all(token not in (r.token_hash or "") for r in rows)
     await engine.dispose()
+
+
+async def test_shared_media_links_are_signed(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bucket has no anonymous access: an unsigned link loads the page and
+    plays nothing."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from visiovox_api.models import Project
+
+    project_id, auth = await _ready_project(client, monkeypatch)
+    base = get_settings().public_media_base_url.rstrip("/")
+    engine = create_async_engine(DB_URL)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    async with maker() as session:
+        project = await session.get(Project, project_id)
+        assert project is not None
+        project.manifest = {
+            **MANIFEST,
+            "playback_hint": "hls",
+            "master_playlist": f"{base}/projects/{project_id}/master.m3u8",
+            "speakers": [
+                {
+                    "ordinal": o,
+                    "label": f"Speaker {o}",
+                    "audio": {"faithful": {"url": f"{base}/projects/{project_id}/spk_{o}_f.m4a"}},
+                }
+                for o in (1, 2)
+            ],
+        }
+        await session.commit()
+    await engine.dispose()
+
+    whole = await client.post(f"/v1/projects/{project_id}/shares", json={}, headers=auth)
+    body = (await client.get(f"/v1/shared/{whole.json()['token']}")).json()
+    url = body["manifest"]["speakers"][0]["audio"]["faithful"]["url"]
+    assert "X-Amz-Signature=" in url
+    assert "/v1/hls/" in body["manifest"]["master_playlist"]
+
+    scoped = await client.post(
+        f"/v1/projects/{project_id}/shares", json={"speaker_ordinal": 2}, headers=auth
+    )
+    body = (await client.get(f"/v1/shared/{scoped.json()['token']}")).json()
+    assert "master_playlist" not in body["manifest"], "it lists every speaker's rendition"
+    assert body["manifest"]["playback_hint"] == "webaudio"
