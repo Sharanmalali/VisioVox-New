@@ -31,7 +31,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
 from sse_starlette.sse import EventSourceResponse
 
-from . import audit, hls, jobqueue, problems, quotas, uploads
+from . import audit, estimates, hls, jobqueue, problems, quotas, uploads
 from .config import Settings, get_settings
 from .deps import CurrentUser, OwnedProject, OwnedProjectSSE, SessionDep, SettingsDep
 from .languages import CAPTION_LANGUAGES
@@ -84,10 +84,14 @@ async def get_limits(
     await uploads.expire_stale(session)
     await session.commit()
 
+    model = await estimates.load(session)
     return LimitsResponse(
         max_upload_bytes=await uploads.max_upload_bytes_now(session, settings),
         max_duration_seconds=settings.max_duration_seconds,
         max_speakers=settings.max_speakers,
+        processing_fixed_seconds=round(model.fixed, 1),
+        processing_seconds_per_media_second=round(model.per_second, 3),
+        processing_estimate_jobs=model.jobs,
         available_bytes=await uploads.available_bytes(session, settings),
         reserved_bytes=await uploads.reserved_bytes(session),
         quotas=await quotas.snapshot(session, user.id, settings),

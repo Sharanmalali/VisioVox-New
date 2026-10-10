@@ -14,15 +14,16 @@
  * referrer in the Google Cloud console is still worth doing - it stops other
  * sites burning your quota - but it is not what keeps data safe.
  *
- * The ID token lives in memory and lasts an hour. It is never written to
- * localStorage: the app renders transcripts derived from user media, so an XSS
- * reaching a persisted credential is the failure this avoids.
+ * The ID token lives in memory and lasts an hour; Firebase keeps the sign-in
+ * itself (its refresh token) in IndexedDB, so a person stays signed in on this
+ * device until they sign out (see `configured`).
  */
 
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
-  browserSessionPersistence,
+  browserLocalPersistence,
+  indexedDBLocalPersistence,
   createUserWithEmailAndPassword,
   getAuth,
   onAuthStateChanged,
@@ -60,17 +61,23 @@ function client(): Auth {
 }
 
 /**
- * Session-scoped persistence: the session ends with the tab.
+ * Signed in until signing out, on this device (2026-10-10, at users' request:
+ * being asked to sign in on every visit was the most common complaint).
  *
- * Firebase defaults to IndexedDB, which survives a browser restart and is
- * readable by any script on the origin — the same property that kept tokens
- * out of localStorage rules it out here. The cost is signing in again after
- * closing the browser, which is the right trade for a tool that renders
- * untrusted-derived text.
+ * This replaces session-only persistence, which ended the session with the
+ * tab. The trade, accepted knowingly: the stored refresh token is readable by
+ * any script on the origin, so an XSS bug would now reach a lasting sign-in
+ * rather than one tab's. That makes the existing XSS defences - no HTML from
+ * user media is ever rendered as markup - matter more, not less. Signing out
+ * clears it; IndexedDB first, localStorage where IndexedDB is unavailable.
  */
 async function configured(): Promise<Auth> {
   const auth = client();
-  await setPersistence(auth, browserSessionPersistence);
+  try {
+    await setPersistence(auth, indexedDBLocalPersistence);
+  } catch {
+    await setPersistence(auth, browserLocalPersistence);
+  }
   return auth;
 }
 

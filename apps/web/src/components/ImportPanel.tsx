@@ -18,6 +18,16 @@ import { api } from '@/lib/store';
 const POLL_MS = 2000;
 const MIN_PART_MS = 5000;
 
+function megabytes(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${(bytes / 1e6).toFixed(0)} MB`;
+}
+
+function roughly(seconds: number): string {
+  if (seconds < 50) return 'less than a minute';
+  const m = Math.round(seconds / 60);
+  return m < 60 ? `about ${String(m)} min` : `about ${(seconds / 3600).toFixed(1)} h`;
+}
+
 function clock(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000));
   const h = Math.floor(s / 3600);
@@ -99,6 +109,14 @@ export function ImportPanel({
               ? 'Queued behind other work on the server.'
               : `${String(state.progress)}% - you can choose the part to process once it is here.`}
           </p>
+          {state.status === 'downloading' && state.total_bytes != null && (
+            <p className="font-mono text-[12.5px] tabular-nums text-fg-muted">
+              {megabytes(state.downloaded_bytes ?? 0)} of {megabytes(state.total_bytes)}
+              {state.speed_bytes_per_second != null &&
+                ` · ${(state.speed_bytes_per_second / 1e6).toFixed(1)} MB/s`}
+              {state.eta_seconds != null && ` · ${roughly(state.eta_seconds)} left`}
+            </p>
+          )}
         </div>
       </Slab>
     );

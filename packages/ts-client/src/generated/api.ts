@@ -818,10 +818,14 @@ export interface components {
         };
         /** ImportResponse */
         ImportResponse: {
+            /** Downloaded Bytes */
+            downloaded_bytes?: number | null;
             /** Duration Ms */
             duration_ms?: number | null;
             /** Error */
             error?: string | null;
+            /** Eta Seconds */
+            eta_seconds?: number | null;
             /** Preview Url */
             preview_url?: string | null;
             /** Progress */
@@ -830,11 +834,15 @@ export interface components {
             project_id: string;
             /** Source Title */
             source_title?: string | null;
+            /** Speed Bytes Per Second */
+            speed_bytes_per_second?: number | null;
             /**
              * Status
              * @enum {string}
              */
             status: "queued" | "downloading" | "ready" | "failed";
+            /** Total Bytes */
+            total_bytes?: number | null;
             /** Url */
             url: string;
         };
@@ -842,6 +850,13 @@ export interface components {
         JobResponse: {
             /** Error Code */
             error_code: string | null;
+            /**
+             * Estimate Jobs
+             * @default 0
+             */
+            estimate_jobs: number;
+            /** Eta Seconds */
+            eta_seconds?: number | null;
             /** Id */
             id: string;
             /** Pipeline Mode */
@@ -904,6 +919,21 @@ export interface components {
             max_speakers: number;
             /** Max Upload Bytes */
             max_upload_bytes: number;
+            /**
+             * Processing Estimate Jobs
+             * @default 0
+             */
+            processing_estimate_jobs: number;
+            /**
+             * Processing Fixed Seconds
+             * @default 0
+             */
+            processing_fixed_seconds: number;
+            /**
+             * Processing Seconds Per Media Second
+             * @default 2.6
+             */
+            processing_seconds_per_media_second: number;
             /** Quotas */
             quotas: {
                 [key: string]: {

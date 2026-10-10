@@ -602,6 +602,11 @@ class MediaImport(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # Measured while downloading, for the time-left figure.
+    downloaded_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    total_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    speed_bps: Mapped[int | None] = mapped_column(BigInteger)
+    eta_seconds: Mapped[int | None] = mapped_column(Integer)
     source_title: Mapped[str | None] = mapped_column(Text)
     error_detail: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _now_col()

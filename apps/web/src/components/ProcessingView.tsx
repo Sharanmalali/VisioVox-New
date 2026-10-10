@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { IconCheck } from '@/components/icons';
 import { Badge, Progress, Slab, SpeakerDot, Spinner, cx } from '@/components/ui';
+import { api } from '@/lib/store';
 import { formatDuration } from '@/lib/upload/resumable';
 
 /**
@@ -195,17 +196,34 @@ export function ProcessingView({
   const pct = event?.progress ?? 0;
 
   /**
-   * Remaining time, as a widening range.
-   *
-   * Derived from observed pace rather than a fixed table, so it is at least
-   * grounded in this job. It is deliberately presented as "about X–Y" and it
-   * widens when a stage runs long, because narrowing a guess as it gets less
-   * reliable is how progress bars come to be distrusted.
+   * Time left, from the server (apps/api estimates.py): each stage's time on
+   * this machine, learned from its finished jobs, counted from where this job
+   * actually is - so a reload or a slow stage does not throw it off. Asked
+   * for every few seconds and counted down in between.
    */
-  const remaining: [number, number] | null =
-    pct > 3 && elapsed > 5
-      ? [(elapsed / pct) * (100 - pct) * 0.8, (elapsed / pct) * (100 - pct) * 1.6]
-      : null;
+  const [eta, setEta] = useState<{ seconds: number; at: number; jobs: number } | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    const ask = async () => {
+      try {
+        const job = await api().getJob(projectId);
+        if (!stopped && job.eta_seconds != null) {
+          setEta({ seconds: job.eta_seconds, at: Date.now(), jobs: job.estimate_jobs });
+        }
+      } catch {
+        // The bar and the stages still work without it.
+      }
+    };
+    void ask();
+    const id = setInterval(() => void ask(), 5000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [projectId]);
+  const left = eta === null ? null : Math.max(0, eta.seconds - (Date.now() - eta.at) / 1000);
+  // `elapsed` ticks every second, which re-renders this countdown.
+  void elapsed;
 
   if (event && TERMINAL.has(event.status)) return null;
 
@@ -235,10 +253,17 @@ export function ProcessingView({
           <Progress value={pct} label="Processing progress" showValue={false} />
           <div className="flex items-center justify-between font-mono text-[12px] text-fg-muted">
             <span className="tabular">{pct}% complete</span>
-            <span className="tabular">
-              {remaining
-                ? `about ${formatDuration(remaining[0])}–${formatDuration(remaining[1])} left`
-                : 'estimating…'}
+            <span
+              className="tabular"
+              title={
+                eta ? `Learned from ${String(eta.jobs)} recent jobs on this server` : undefined
+              }
+            >
+              {left === null
+                ? 'estimating…'
+                : left < 5
+                  ? 'finishing up…'
+                  : `about ${formatDuration(left)} left`}
             </span>
           </div>
         </div>

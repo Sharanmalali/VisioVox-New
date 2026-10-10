@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 
-from . import audit, idempotency, logredact, problems
+from . import audit, estimates, idempotency, logredact, problems
 from .config import get_settings
 from .db import dispose_engine
 from .deps import CurrentUser, OwnedProject, SessionDep, SettingsDep
@@ -362,6 +362,10 @@ async def get_job(project: OwnedProject, session: SessionDep) -> JobResponse:
             select(JobStage).where(JobStage.job_id == job.id).order_by(JobStage.ordinal)
         )
     ).all()
+    model = await estimates.load(session)
+    eta: int | None = None
+    if job.status in ("queued", "running") and project.duration_ms:
+        eta = round(estimates.remaining(model, project.duration_ms / 1000, list(stages)))
     return JobResponse(
         id=job.id,
         project_id=job.project_id,
@@ -379,6 +383,8 @@ async def get_job(project: OwnedProject, session: SessionDep) -> JobResponse:
             )
             for s in stages
         ],
+        eta_seconds=eta,
+        estimate_jobs=model.jobs,
     )
 
 

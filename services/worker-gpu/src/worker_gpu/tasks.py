@@ -1256,18 +1256,43 @@ def import_media(self: Any, import_id: str) -> dict[str, Any]:
         work_root = Path(settings.media_work_dir)
         work_root.mkdir(parents=True, exist_ok=True)
         work = Path(tempfile.mkdtemp(prefix=f"import-{import_id}-", dir=work_root))
-        last = {"pct": -10}
+        last = {"at": 0.0}
         started: dict[str, float] = {}
+        # Bytes of the files (video, then audio) already finished this attempt.
+        finished: dict[str, int] = {}
+
+        def overall_total(d: dict[str, Any]) -> int:
+            """Every file of this download, not just the current one."""
+            info = d.get("info_dict") or {}
+            parts = info.get("requested_formats") or [info]
+            sizes = [int(f.get("filesize") or f.get("filesize_approx") or 0) for f in parts]
+            current = int(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
+            return max(sum(sizes), sum(finished.values()) + current)
 
         def hook(d: dict[str, Any]) -> None:
+            key = str(d.get("filename"))
+            if d.get("status") == "finished":
+                finished[key] = int(d.get("total_bytes") or d.get("downloaded_bytes") or 0)
+                return
             if d.get("status") != "downloading":
                 return
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             got = d.get("downloaded_bytes", 0)
-            pct = int(100 * got / total) if total else 0
-            if pct >= last["pct"] + 5:
-                last["pct"] = pct
-                row.progress = max(0, min(99, pct))
+            now = time.monotonic()
+            if now - last["at"] >= 2:
+                last["at"] = now
+                all_total = overall_total(d)
+                all_got = sum(v for k, v in finished.items() if k != key) + int(got)
+                speed = float(d.get("speed") or 0)
+                row.downloaded_bytes = all_got
+                row.total_bytes = all_total or None
+                row.speed_bps = int(speed) if speed else None
+                row.eta_seconds = (
+                    int((all_total - all_got) / speed)
+                    if speed > 0 and all_total > all_got
+                    else None
+                )
+                row.progress = max(0, min(99, int(100 * all_got / all_total))) if all_total else 0
                 session.commit()
             # Per file (video, then audio): a throttled link shows itself early.
             key = str(d.get("filename"))
@@ -1318,6 +1343,7 @@ def import_media(self: Any, import_id: str) -> dict[str, Any]:
                 for leftover in work.glob("source.*"):
                     leftover.unlink(missing_ok=True)
                 started.clear()
+                finished.clear()
                 try:
                     with yt_dlp.YoutubeDL({**options, "format": fmt}) as ydl:
                         info = ydl.extract_info(row.url, download=True)

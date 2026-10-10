@@ -67,6 +67,10 @@ async def _response(row: MediaImport, project: Project, settings: SettingsDep) -
         error=row.error_detail,
         duration_ms=project.duration_ms if row.status == "ready" else None,
         preview_url=preview,
+        downloaded_bytes=row.downloaded_bytes,
+        total_bytes=row.total_bytes,
+        speed_bytes_per_second=row.speed_bps,
+        eta_seconds=row.eta_seconds if row.status == "downloading" else None,
     )
 
 

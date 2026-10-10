@@ -23,6 +23,7 @@ import {
   IconX,
 } from '@/components/icons';
 import { LanguageSelect } from '@/components/LanguageSelect';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { AppPage, AppShell, PageHeader } from '@/components/shell/AppShell';
 import {
   Alert,
@@ -54,16 +55,19 @@ interface Inspected {
 }
 
 /**
- * Processing estimate, from measured runs: median 2.6x realtime across 24
- * production jobs (paper, latency table). Still a RANGE and still wide,
- * because a quiet two-person interview and a noisy four-person meeting sit at
- * opposite ends of it; a confident single number would be planned around.
+ * Processing time on this server, learned from its finished jobs (the API's
+ * estimates.py, via /v1/limits): a fixed start-up plus a time per second of
+ * video. Median error 16% on 53 past jobs, against 27% for the flat 2.6x
+ * realtime rule it replaced.
  */
-const MEASURED_RTF = 2.6;
-
-function estimateProcessing(durationSeconds: number | null): [number, number] | null {
+function estimateProcessing(
+  durationSeconds: number | null,
+  limits: LimitsResponse | null,
+): number | null {
   if (durationSeconds === null) return null;
-  return [durationSeconds * MEASURED_RTF * 0.7, durationSeconds * MEASURED_RTF * 1.6];
+  const fixed = limits?.processing_fixed_seconds ?? 0;
+  const perSecond = limits?.processing_seconds_per_media_second ?? 2.6;
+  return fixed + perSecond * durationSeconds;
 }
 
 const TIPS = [
@@ -183,7 +187,9 @@ export default function UploadPage() {
   const tooLong = longBy !== null;
   const busy =
     progress !== null && ['uploading', 'preparing', 'finalising'].includes(progress.phase);
-  const estimate = estimateProcessing(localDuration);
+  const estimate = estimateProcessing(localDuration, limits);
+  const minutesPerMinute = limits?.processing_seconds_per_media_second ?? 2.6;
+  const [confirming, setConfirming] = useState<'upload' | 'import' | null>(null);
 
   if (!ready) {
     return (
@@ -198,6 +204,52 @@ export default function UploadPage() {
 
   return (
     <AppShell>
+      <ConfirmDialog
+        open={confirming !== null}
+        title="Bigger videos take longer"
+        confirmLabel={confirming === 'import' ? 'Import video' : 'Upload and process'}
+        onCancel={() => {
+          setConfirming(null);
+        }}
+        onConfirm={() => {
+          const what = confirming;
+          setConfirming(null);
+          if (what === 'upload') void begin();
+          if (what === 'import') void importLink();
+        }}
+      >
+        {confirming === 'upload' && file !== null ? (
+          <>
+            <p>
+              The larger the file, the longer the <strong>upload</strong> takes - this one is{' '}
+              {formatBytes(file.size)}, and how long it takes depends on your connection.
+            </p>
+            <p>
+              The longer the video, the longer the <strong>processing</strong> takes: on this server
+              about {formatDuration(minutesPerMinute * 60)} for every minute of video
+              {estimate !== null && localDuration !== null
+                ? `, so about ${formatDuration(estimate)} for this ${formatDuration(localDuration)} recording`
+                : ''}
+              .
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              The video is <strong>downloaded</strong> to our server first - the longer and sharper
+              it is, the longer that takes, and YouTube sometimes slows downloads down.
+            </p>
+            <p>
+              Then you choose the part to process. The longer that part, the longer the{' '}
+              <strong>processing</strong> takes: about {formatDuration(minutesPerMinute * 60)} for
+              every minute on this server.
+            </p>
+          </>
+        )}
+        <p className="text-[13px] text-fg-muted">
+          You can close this tab; the work carries on and the project page shows the time left.
+        </p>
+      </ConfirmDialog>
       <AppPage>
         <PageHeader
           title="Upload a recording"
@@ -330,7 +382,7 @@ export default function UploadPage() {
                       size="lg"
                       disabled={!attested || !linkLooksRight || importing}
                       onClick={() => {
-                        void importLink();
+                        setConfirming('import');
                       }}
                     >
                       {importing ? 'Starting…' : 'Import video'}
@@ -403,14 +455,14 @@ export default function UploadPage() {
                       <div>
                         <p className="text-[12px] font-medium text-fg-muted">Processing time</p>
                         <p className="mt-0.5 text-sm font-medium tabular">
-                          {estimate
-                            ? `About ${formatDuration(estimate[0])}–${formatDuration(estimate[1])}`
+                          {estimate !== null
+                            ? `About ${formatDuration(estimate)}`
                             : 'Estimated once we can read the file'}
                         </p>
                       </div>
                       <p className="text-[12px] leading-relaxed text-fg-muted sm:col-span-2">
-                        An estimate from measured runs. It varies with how much people talk over
-                        each other.
+                        Learned from {String(limits?.processing_estimate_jobs ?? 0)} recent jobs on
+                        this server. More people on screen take longer.
                       </p>
                     </div>
                   )}
@@ -424,7 +476,7 @@ export default function UploadPage() {
                       size="lg"
                       disabled={!attested || tooBig || tooLong}
                       onClick={() => {
-                        void begin();
+                        setConfirming('upload');
                       }}
                     >
                       <IconSparkles size={17} />

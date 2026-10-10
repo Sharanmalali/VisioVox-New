@@ -277,6 +277,11 @@ class LimitsResponse(BaseModel):
     max_upload_bytes: int
     max_duration_seconds: int
     max_speakers: int
+    # Processing time on this machine: fixed + per_media_second x length,
+    # learned from `processing_estimate_jobs` finished jobs (estimates.py).
+    processing_fixed_seconds: float = 0.0
+    processing_seconds_per_media_second: float = 2.6
+    processing_estimate_jobs: int = 0
     available_bytes: int
     reserved_bytes: int
     quotas: dict[str, dict[str, int]]
@@ -311,6 +316,11 @@ class JobResponse(BaseModel):
     pipeline_mode: str
     error_code: str | None
     stages: list[JobStageResponse]
+    # Seconds left, from this machine's measured stage times (estimates.py);
+    # None when finished or before anything can be said.
+    eta_seconds: int | None = None
+    # How many past jobs the estimate is learned from.
+    estimate_jobs: int = 0
 
 
 class ErrorResponse(BaseModel):
@@ -451,6 +461,11 @@ class ImportResponse(BaseModel):
     duration_ms: int | None = None
     # The downloaded video, for choosing the part to process.
     preview_url: str | None = None
+    # While downloading: measured, not guessed.
+    downloaded_bytes: int | None = None
+    total_bytes: int | None = None
+    speed_bytes_per_second: int | None = None
+    eta_seconds: int | None = None
 
 
 class ProcessRequest(StrictModel):
