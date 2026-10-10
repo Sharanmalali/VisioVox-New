@@ -27,6 +27,13 @@ import { ButtonLink } from '@/components/ui';
 const API =
   process.env.API_INTERNAL_URL ?? process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
+// Rendered for every request. Without this, Next.js first tries to render the
+// page statically and signals that it cannot by throwing from the no-store
+// fetch below - which `load`'s catch swallowed, so the page rendered "not
+// available" without ever asking the API, and that result was cached: every
+// shared link showed as revoked and none was ever counted as opened.
+export const dynamic = 'force-dynamic';
+
 interface SharePayload {
   title: string;
   duration_ms: number | null;

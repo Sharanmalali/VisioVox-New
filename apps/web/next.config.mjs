@@ -16,8 +16,9 @@ const nextConfig = {
   output: 'standalone',
   // The workspace root, so tracing follows into packages/.
   outputFileTracingRoot: new URL('../../', import.meta.url).pathname,
-  // The API base is read at request time on the server, so the same build can
-  // be promoted between environments without rebuilding.
-  env: { API_INTERNAL_URL: process.env.API_INTERNAL_URL ?? 'http://localhost:8000' },
+  // No `env` entry for API_INTERNAL_URL: `env` here is inlined at BUILD time,
+  // which baked http://localhost:8000 into the share page and broke every
+  // shared link. Server code reads process.env.API_INTERNAL_URL at request
+  // time instead, so the same build can be promoted between environments.
 };
 export default nextConfig;
