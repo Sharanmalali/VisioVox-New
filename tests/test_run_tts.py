@@ -62,3 +62,21 @@ def test_trim_removes_silent_edges_and_keeps_a_margin() -> None:
     out = tts.trim(wav, RATE)
     margin = round(tts.MARGIN_S * RATE)
     assert len(out) == 300 + 2 * margin
+
+
+def test_babble_silence_and_good_takes_are_told_apart() -> None:
+    rate = 1000
+    word = "Yeah."
+    speech = np.full(500, 0.3, dtype=np.float32)
+    assert tts.fault(word, speech, rate) is None
+    assert tts.fault(word, np.full(3000, 0.3, dtype=np.float32), rate) == "long"
+    assert tts.fault(word, np.zeros(0, dtype=np.float32), rate) == "short"
+    assert tts.fault(word, np.full(100, 0.3, dtype=np.float32), rate) == "short"
+    assert tts.fault(word, np.full(500, 0.001, dtype=np.float32), rate) == "short"
+
+
+def test_the_floor_stays_below_real_speech() -> None:
+    # Real lines run 80-140 ms per character; the floor is 40.
+    text = "हमें शुक्रवार तक रिपोर्ट भेजनी है"
+    assert tts.floor_ms(text) < 80 * sum(1 for c in text if not c.isspace())
+    assert tts.floor_ms("हाँ.") == tts.MIN_FLOOR_MS

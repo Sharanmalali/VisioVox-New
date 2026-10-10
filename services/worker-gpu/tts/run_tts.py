@@ -13,10 +13,13 @@ voice), and cut back to their own length from the padded batch output. The
 model pads every line with 0.3-0.9 s of silence at each end, which would
 otherwise eat into the time the line has to fit; that is trimmed off.
 
-On very short prompts ("तो.", "So.") the model sometimes keeps talking -
-seconds of babble after the word. A line far longer than its text allows
-(`limit_ms`) is generated again with other seeds; if every try is too long,
-the shortest is cut at the limit (the word comes first, the babble after).
+On very short prompts ("तो.", "So.", "Yeah.") the model sometimes keeps
+talking - seconds of babble after the word - and sometimes says nothing at
+all (measured on AMI: 2-4 % of lines came out silent). A line far longer
+than its text allows (`limit_ms`), or far shorter (`floor_ms`, or near
+silent), is generated again with other seeds and the first good take kept.
+If none is good: too long is cut at the limit (the word comes first, the
+babble after); too short keeps its longest take. Both are counted.
 """
 
 from __future__ import annotations
@@ -36,21 +39,44 @@ SILENCE = 0.02
 MARGIN_S = 0.05
 
 
-# Duration guard: generously above real speech (~80-140 ms per character
-# measured on AMI lines), so only babble trips it.
+# Duration guard, generously either side of real speech (~80-140 ms per
+# character measured on AMI lines), so only babble or silence trips it.
 BASE_MS = 400
 PER_CHAR_MS = 200
 FLOOR_MS = 1000
-RETRY_SEEDS = (1, 2)
+MIN_PER_CHAR_MS = 40
+MIN_FLOOR_MS = 250
+MIN_PEAK = 0.01  # a take whose loudest sample is under this is silence
+RETRY_SEEDS = (1, 2, 3)
 FADE_S = 0.03
+
+
+def _chars(text: str) -> int:
+    import unicodedata
+
+    return sum(1 for c in text if not unicodedata.category(c).startswith(("P", "Z", "S", "C")))
 
 
 def limit_ms(text: str) -> int:
     """The longest a line of `text` may plausibly take to say."""
-    import unicodedata
+    return max(FLOOR_MS, BASE_MS + PER_CHAR_MS * _chars(text))
 
-    chars = sum(1 for c in text if not unicodedata.category(c).startswith(("P", "Z", "S", "C")))
-    return max(FLOOR_MS, BASE_MS + PER_CHAR_MS * chars)
+
+def floor_ms(text: str) -> int:
+    """The shortest a line of `text` may plausibly take to say."""
+    return max(MIN_FLOOR_MS, MIN_PER_CHAR_MS * _chars(text))
+
+
+def fault(text: str, wav: Any, rate: int) -> str | None:
+    """ "long" (babble), "short" (nothing or almost nothing said), or None."""
+    import numpy as np
+
+    ms = len(wav) * 1000 / rate
+    if ms > limit_ms(text):
+        return "long"
+    if ms < floor_ms(text) or not len(wav) or float(np.max(np.abs(wav))) < MIN_PEAK:
+        return "short"
+    return None
 
 
 def cut(wav: Any, rate: int, ms: int) -> Any:
@@ -137,9 +163,6 @@ def main() -> int:
             out.append(trim(audio.to(torch.float32).cpu().numpy().reshape(-1), rate))
         return out
 
-    def too_long(ln: dict[str, Any], wav: Any) -> bool:
-        return len(wav) * 1000 / rate > limit_ms(ln["text"])
-
     # The same request gives the same voices.
     set_seed(0)
     t1 = time.time()
@@ -150,10 +173,15 @@ def main() -> int:
             audio[ln["id"]] = wav
         log(f"{min(start + BATCH, len(lines))}/{len(lines)} lines")
 
-    # Babble: try again with other seeds, keep the first that fits, else cut.
+    # Babble or silence: try again with other seeds and keep the first good
+    # take; meanwhile remember the least bad one.
     by_id = {ln["id"]: ln for ln in lines}
-    flagged = [i for i in audio if too_long(by_id[i], audio[i])]
-    retried, cut_lines = len(flagged), 0
+
+    def bad(i: int, wav: Any) -> str | None:
+        return fault(by_id[i]["text"], wav, rate)
+
+    flagged = [i for i in audio if bad(i, audio[i])]
+    first = {i: bad(i, audio[i]) for i in flagged}
     for seed in RETRY_SEEDS:
         if not flagged:
             break
@@ -162,19 +190,30 @@ def main() -> int:
         for start in range(0, len(flagged), BATCH):
             ids = flagged[start : start + BATCH]
             for i, wav in zip(ids, generate([by_id[i] for i in ids]), strict=True):
-                if not too_long(by_id[i], wav):
+                if not bad(i, wav):
                     audio[i] = wav
-                elif len(wav) < len(audio[i]):
+                    continue
+                still.append(i)
+                # Too long: prefer the shorter take; too short: the longer.
+                if (bad(i, audio[i]) == "long" and len(wav) < len(audio[i])) or (
+                    bad(i, audio[i]) == "short" and len(wav) > len(audio[i])
+                ):
                     audio[i] = wav
-                    still.append(i)
-                else:
-                    still.append(i)
         flagged = still
+    cut_lines = short_lines = 0
     for i in flagged:
-        audio[i] = cut(audio[i], rate, limit_ms(by_id[i]["text"]))
-        cut_lines += 1
-    if retried:
-        log(f"{retried} line(s) ran long; {retried - cut_lines} regenerated, {cut_lines} cut")
+        if bad(i, audio[i]) == "long":
+            audio[i] = cut(audio[i], rate, limit_ms(by_id[i]["text"]))
+            cut_lines += 1
+        else:
+            short_lines += 1
+    retried_long = sum(1 for f in first.values() if f == "long")
+    retried_short = sum(1 for f in first.values() if f == "short")
+    if first:
+        log(
+            f"retried {retried_long} long and {retried_short} short line(s); "
+            f"{cut_lines} cut, {short_lines} still short"
+        )
 
     results = []
     for ln in lines:
@@ -198,8 +237,10 @@ def main() -> int:
                 "lines": results,
                 "seconds": took,
                 "speech_s": spoken,
-                "retried": retried,
+                "retried_long": retried_long,
+                "retried_short": retried_short,
                 "cut": cut_lines,
+                "still_short": short_lines,
             },
             indent=1,
         ),
