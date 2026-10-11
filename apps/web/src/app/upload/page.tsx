@@ -535,6 +535,12 @@ export default function UploadPage() {
                         Tick the box below first - it applies to every way of bringing a video.
                       </span>
                     )}
+                    {googleBusy !== null && (
+                      <span className="text-[13px] text-fg-muted" role="status">
+                        Waiting for Google - finish in the window that opened. If you closed it,
+                        this resets in a few seconds.
+                      </span>
+                    )}
                     {photos !== null && (
                       <div className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-accent bg-accent-soft p-4">
                         <p className="inline-flex items-center gap-2 text-[14px] font-medium">
