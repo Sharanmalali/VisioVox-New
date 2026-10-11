@@ -1,4 +1,5 @@
-"""Import a recording from a link instead of uploading it (docs/28).
+"""Import a recording from a link, Google Drive or Google Photos instead of
+uploading it (docs/28).
 
 The worker downloads the video (yt-dlp) into the project's source slot. The
 project then waits, status `pending`, while the person picks the part they
@@ -8,6 +9,8 @@ Only YouTube and Vimeo links are accepted. A downloader that follows any URL
 is a request-forgery tool pointed at this server's own network (the object
 store, the database, the metadata endpoints of whatever it runs on), and the
 extractor allow-list in the worker is the second line of the same defence.
+Google picks are identified, never addressed: a Drive file id, or a Photos
+item whose bytes must live on googleusercontent.com (google_media.py).
 """
 
 from __future__ import annotations
@@ -18,10 +21,18 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from . import audit, jobqueue, quotas
+from . import audit, google_media, jobqueue, quotas
 from .deps import CurrentUser, OwnedProject, SessionDep, SettingsDep
 from .models import Job, MediaImport, Project
-from .schemas import ImportRequest, ImportResponse, ProcessRequest
+from .schemas import (
+    GoogleImport,
+    ImportRequest,
+    ImportResponse,
+    PhotosPollResponse,
+    PhotosSessionRequest,
+    PhotosSessionResponse,
+    ProcessRequest,
+)
 from .storage import ObjectStore, object_key
 
 router = APIRouter(prefix="/v1", tags=["imports"])
@@ -61,6 +72,7 @@ async def _response(row: MediaImport, project: Project, settings: SettingsDep) -
     return ImportResponse(
         project_id=project.id,
         url=row.url,
+        source=row.source,  # type: ignore[arg-type]
         status=row.status,  # type: ignore[arg-type]
         progress=row.progress,
         source_title=row.source_title,
@@ -82,7 +94,8 @@ async def start_import(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="rights attestation is required"
         )
-    url = check_url(body.url)
+    google = check_google(body.google) if body.google is not None else None
+    url = check_url(body.url) if body.url is not None else _describe(google)
     await quotas.assert_concurrency_available(session, user.id, settings)
     # An import costs what an upload costs: a slot today and the storage behind it.
     await quotas.consume(session, user.id, quotas.UPLOADS, 1, settings)
@@ -96,7 +109,8 @@ async def start_import(
     session.add(project)
     await session.flush()
     project.source_key = object_key(user.id, project.id, "source.mp4")
-    row = MediaImport(project_id=project.id, user_id=user.id, url=url)
+    source = google.kind if google is not None else "link"
+    row = MediaImport(project_id=project.id, user_id=user.id, url=url, source=source)
     session.add(row)
     await audit.record(
         session,
@@ -104,11 +118,65 @@ async def start_import(
         user_id=user.id,
         target_type="project",
         target_id=project.id,
-        detail={"host": urlsplit(url).hostname},
+        detail={"source": source, "host": urlsplit(url).hostname if google is None else None},
     )
     await session.commit()
-    jobqueue.enqueue_import(row.id)
+    if google is not None:
+        jobqueue.enqueue_google_import(row.id, google.model_dump())
+    else:
+        jobqueue.enqueue_import(row.id)
     return await _response(row, project, settings)
+
+
+def check_google(google: GoogleImport) -> GoogleImport:
+    """A Drive file id, or a Photos item on Google's media host - nothing else."""
+    if google.kind == "drive":
+        if not google.file_id or not google_media.DRIVE_ID.match(google.file_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="choose a video in Google Drive"
+            )
+    elif not google.base_url or not google_media.PHOTOS_MEDIA.match(google.base_url):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="choose a video in Google Photos"
+        )
+    if google.session_id is not None and not google_media.SESSION_ID.match(google.session_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad picker session")
+    return google
+
+
+def _describe(google: GoogleImport | None) -> str:
+    """What the import page shows as the source."""
+    assert google is not None
+    where = "Google Drive" if google.kind == "drive" else "Google Photos"
+    return f"{where}: {google.filename or 'video'}"
+
+
+@router.post("/google/photos/sessions", status_code=status.HTTP_201_CREATED)
+async def start_photos_pick(body: PhotosSessionRequest, user: CurrentUser) -> PhotosSessionResponse:
+    """A Google Photos picker for one video, opened by the person in a new tab."""
+    try:
+        made = await google_media.create_photos_session(body.access_token)
+    except google_media.GoogleError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    if not made.get("session_id") or not made.get("picker_uri"):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Google Photos did not open a picker"
+        )
+    return PhotosSessionResponse(**made)
+
+
+@router.post("/google/photos/sessions/{session_id}/poll")
+async def poll_photos_pick(
+    session_id: str, body: PhotosSessionRequest, user: CurrentUser
+) -> PhotosPollResponse:
+    """Has the person picked a video yet? (The token travels in the body, not the URL.)"""
+    if not google_media.SESSION_ID.match(session_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad picker session")
+    try:
+        state = await google_media.poll_photos_session(body.access_token, session_id)
+    except google_media.GoogleError as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.message) from exc
+    return PhotosPollResponse(**state)
 
 
 @router.get("/projects/{project_id}/import")

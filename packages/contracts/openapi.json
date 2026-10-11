@@ -453,10 +453,100 @@
         "title": "ExportResponse",
         "type": "object"
       },
+      "GoogleImport": {
+        "additionalProperties": false,
+        "description": "A video the person picked in Google Drive or Google Photos.",
+        "properties": {
+          "access_token": {
+            "maxLength": 4096,
+            "minLength": 20,
+            "title": "Access Token",
+            "type": "string"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "file_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Id"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "kind": {
+            "enum": ["drive", "photos"],
+            "title": "Kind",
+            "type": "string"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          }
+        },
+        "required": ["kind", "access_token"],
+        "title": "GoogleImport",
+        "type": "object"
+      },
       "ImportRequest": {
         "additionalProperties": false,
-        "description": "Like creating a project, from a link; the title defaults to the video's.",
+        "description": "Like creating a project, from a link or a Google pick; the title\ndefaults to the video's.",
         "properties": {
+          "google": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GoogleImport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "language": {
             "anyOf": [
               {
@@ -488,14 +578,21 @@
             "title": "Title"
           },
           "url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 8,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "description": "A YouTube or Vimeo link",
-            "maxLength": 500,
-            "minLength": 8,
-            "title": "Url",
-            "type": "string"
+            "title": "Url"
           }
         },
-        "required": ["rights_attested", "url"],
+        "required": ["rights_attested"],
         "title": "ImportRequest",
         "type": "object"
       },
@@ -562,6 +659,12 @@
           },
           "project_id": {
             "title": "Project Id",
+            "type": "string"
+          },
+          "source": {
+            "default": "link",
+            "enum": ["link", "drive", "photos"],
+            "title": "Source",
             "type": "string"
           },
           "source_title": {
@@ -815,6 +918,112 @@
           "caption_languages"
         ],
         "title": "LimitsResponse",
+        "type": "object"
+      },
+      "PhotosPickedItem": {
+        "properties": {
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "filename": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filename"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "is_video": {
+            "title": "Is Video",
+            "type": "boolean"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          }
+        },
+        "required": ["is_video"],
+        "title": "PhotosPickedItem",
+        "type": "object"
+      },
+      "PhotosPollResponse": {
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PhotosPickedItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": ["done", "items"],
+        "title": "PhotosPollResponse",
+        "type": "object"
+      },
+      "PhotosSessionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "access_token": {
+            "maxLength": 4096,
+            "minLength": 20,
+            "title": "Access Token",
+            "type": "string"
+          }
+        },
+        "required": ["access_token"],
+        "title": "PhotosSessionRequest",
+        "type": "object"
+      },
+      "PhotosSessionResponse": {
+        "properties": {
+          "picker_uri": {
+            "title": "Picker Uri",
+            "type": "string"
+          },
+          "poll_seconds": {
+            "title": "Poll Seconds",
+            "type": "number"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": ["session_id", "picker_uri", "poll_seconds"],
+        "title": "PhotosSessionResponse",
         "type": "object"
       },
       "ProcessRequest": {
@@ -1883,6 +2092,137 @@
         },
         "summary": "Me",
         "tags": ["auth"]
+      }
+    },
+    "/v1/google/photos/sessions": {
+      "post": {
+        "description": "A Google Photos picker for one video, opened by the person in a new tab.",
+        "operationId": "start_photos_pick_v1_google_photos_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotosSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotosSessionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Start Photos Pick",
+        "tags": ["imports"]
+      }
+    },
+    "/v1/google/photos/sessions/{session_id}/poll": {
+      "post": {
+        "description": "Has the person picked a video yet? (The token travels in the body, not the URL.)",
+        "operationId": "poll_photos_pick_v1_google_photos_sessions__session_id__poll_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhotosSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotosPollResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Poll Photos Pick",
+        "tags": ["imports"]
       }
     },
     "/v1/hls/{key}": {

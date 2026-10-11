@@ -77,6 +77,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/google/photos/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Photos Pick
+         * @description A Google Photos picker for one video, opened by the person in a new tab.
+         */
+        post: operations["start_photos_pick_v1_google_photos_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/google/photos/sessions/{session_id}/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Poll Photos Pick
+         * @description Has the person picked a video yet? (The token travels in the body, not the URL.)
+         */
+        post: operations["poll_photos_pick_v1_google_photos_sessions__session_id__poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/hls/{key}": {
         parameters: {
             query?: never;
@@ -794,10 +834,35 @@ export interface components {
             status: string;
         };
         /**
+         * GoogleImport
+         * @description A video the person picked in Google Drive or Google Photos.
+         */
+        GoogleImport: {
+            /** Access Token */
+            access_token: string;
+            /** Base Url */
+            base_url?: string | null;
+            /** File Id */
+            file_id?: string | null;
+            /** Filename */
+            filename?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "drive" | "photos";
+            /** Mime Type */
+            mime_type?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+        };
+        /**
          * ImportRequest
-         * @description Like creating a project, from a link; the title defaults to the video's.
+         * @description Like creating a project, from a link or a Google pick; the title
+         *     defaults to the video's.
          */
         ImportRequest: {
+            google?: components["schemas"]["GoogleImport"] | null;
             /**
              * Language
              * @description Spoken language for captions, a code from /v1/limits `caption_languages`; omit or null to detect automatically
@@ -814,7 +879,7 @@ export interface components {
              * Url
              * @description A YouTube or Vimeo link
              */
-            url: string;
+            url?: string | null;
         };
         /** ImportResponse */
         ImportResponse: {
@@ -832,6 +897,12 @@ export interface components {
             progress: number;
             /** Project Id */
             project_id: string;
+            /**
+             * Source
+             * @default link
+             * @enum {string}
+             */
+            source: "link" | "drive" | "photos";
             /** Source Title */
             source_title?: string | null;
             /** Speed Bytes Per Second */
@@ -942,6 +1013,40 @@ export interface components {
             };
             /** Reserved Bytes */
             reserved_bytes: number;
+        };
+        /** PhotosPickedItem */
+        PhotosPickedItem: {
+            /** Base Url */
+            base_url?: string | null;
+            /** Filename */
+            filename?: string | null;
+            /** Id */
+            id?: string | null;
+            /** Is Video */
+            is_video: boolean;
+            /** Mime Type */
+            mime_type?: string | null;
+        };
+        /** PhotosPollResponse */
+        PhotosPollResponse: {
+            /** Done */
+            done: boolean;
+            /** Items */
+            items: components["schemas"]["PhotosPickedItem"][];
+        };
+        /** PhotosSessionRequest */
+        PhotosSessionRequest: {
+            /** Access Token */
+            access_token: string;
+        };
+        /** PhotosSessionResponse */
+        PhotosSessionResponse: {
+            /** Picker Uri */
+            picker_uri: string;
+            /** Poll Seconds */
+            poll_seconds: number;
+            /** Session Id */
+            session_id: string;
         };
         /**
          * ProcessRequest
@@ -1445,6 +1550,110 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    start_photos_pick_v1_google_photos_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PhotosSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhotosSessionResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    poll_photos_pick_v1_google_photos_sessions__session_id__poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PhotosSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PhotosPollResponse"];
                 };
             };
             /** @description Unauthorized */

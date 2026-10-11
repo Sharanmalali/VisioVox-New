@@ -63,6 +63,14 @@ def enqueue_import(import_id: str) -> None:
     _producer().send_task(IMPORT_TASK, args=[import_id], queue=GPU_QUEUE)
 
 
+GOOGLE_IMPORT_TASK = "visiovox.import_google"
+
+
+def enqueue_google_import(import_id: str, google: dict[str, Any]) -> None:
+    """The access token rides in the message only: it is never written down."""
+    _producer().send_task(GOOGLE_IMPORT_TASK, args=[import_id, google], queue=GPU_QUEUE)
+
+
 def enqueue_export(export_id: str) -> None:
     _producer().send_task(RENDER_EXPORT_TASK, args=[export_id], queue=GPU_QUEUE)
 

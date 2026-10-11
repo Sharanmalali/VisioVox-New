@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -84,8 +85,11 @@ def as_user(monkeypatch: pytest.MonkeyPatch) -> SignIn:
 async def client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
     if not await _reachable():
         pytest.skip("Postgres not reachable; run `make dev`")
-    sent: list[tuple[str, str]] = []
+    sent: list[tuple[Any, ...]] = []
     monkeypatch.setattr(jobqueue, "enqueue_import", lambda i: sent.append(("import", i)))
+    monkeypatch.setattr(
+        jobqueue, "enqueue_google_import", lambda i, g: sent.append(("google", i, g))
+    )
     monkeypatch.setattr(jobqueue, "enqueue_real", lambda j: sent.append(("real", j)))
     monkeypatch.setattr(jobqueue, "enqueue_mock", lambda j: sent.append(("mock", j)))
     await dispose_engine()
@@ -196,3 +200,103 @@ async def test_processing_the_whole_video_sets_no_trim(
     await engine.dispose()
     assert project is not None
     assert project.trim_start_ms is None and project.trim_end_ms is None
+
+
+GOOGLE_TOKEN = "ya29." + "t" * 60
+
+
+async def test_a_drive_pick_is_queued_with_its_token_which_is_never_stored(
+    client: AsyncClient, as_user: SignIn
+) -> None:
+    headers = as_user()
+    r = await client.post(
+        "/v1/imports",
+        json={
+            "rights_attested": True,
+            "google": {
+                "kind": "drive",
+                "access_token": GOOGLE_TOKEN,
+                "file_id": "1AbCdEfGhIjKlMnOpQrS",
+                "filename": "Team meeting.mp4",
+            },
+        },
+        headers=headers,
+    )
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["source"] == "drive"
+    assert body["url"] == "Google Drive: Team meeting.mp4"
+    kind, _, google = client.sent[-1]  # type: ignore[attr-defined]
+    assert kind == "google" and google["access_token"] == GOOGLE_TOKEN
+
+    engine = create_async_engine(DB_URL)
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text("select row_to_json(m)::text from media_imports m where project_id = :p"),
+                {"p": body["project_id"]},
+            )
+        ).scalar_one()
+    await engine.dispose()
+    assert GOOGLE_TOKEN not in row, "the token must not be written down"
+
+
+async def test_a_photos_pick_must_point_at_google(client: AsyncClient, as_user: SignIn) -> None:
+    headers = as_user()
+    for base_url, code in (
+        ("https://lh3.googleusercontent.com/AbCd_123", 202),
+        ("http://minio:9000/visiovox-media/x", 400),
+    ):
+        r = await client.post(
+            "/v1/imports",
+            json={
+                "rights_attested": True,
+                "google": {"kind": "photos", "access_token": GOOGLE_TOKEN, "base_url": base_url},
+            },
+            headers=headers,
+        )
+        assert r.status_code == code, (base_url, r.text)
+
+
+async def test_the_photos_picker_is_proxied_and_its_errors_explained(
+    client: AsyncClient, as_user: SignIn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from visiovox_api import google_media
+
+    async def made(token: str) -> dict[str, object]:
+        assert token == GOOGLE_TOKEN
+        return {
+            "session_id": "sess_123456",
+            "picker_uri": "https://photos.google.com/picker/x",
+            "poll_seconds": 3.0,
+        }
+
+    async def polled(token: str, session_id: str) -> dict[str, object]:
+        return {"done": True, "items": [{"id": "m1", "is_video": True,
+                "base_url": "https://lh3.googleusercontent.com/v", "filename": "clip.mp4",
+                "mime_type": "video/mp4"}]}  # fmt: skip
+
+    monkeypatch.setattr(google_media, "create_photos_session", made)
+    monkeypatch.setattr(google_media, "poll_photos_session", polled)
+    headers = as_user()
+    started = await client.post(
+        "/v1/google/photos/sessions", json={"access_token": GOOGLE_TOKEN}, headers=headers
+    )
+    assert started.status_code == 201, started.text
+    assert started.json()["picker_uri"].startswith("https://photos.google.com/")
+    poll = await client.post(
+        "/v1/google/photos/sessions/sess_123456/poll",
+        json={"access_token": GOOGLE_TOKEN},
+        headers=headers,
+    )
+    assert poll.json()["items"][0]["filename"] == "clip.mp4"
+
+    async def disabled(token: str) -> dict[str, object]:
+        raise google_media.GoogleError("Google Photos is not switched on for this site yet.", 503)
+
+    monkeypatch.setattr(google_media, "create_photos_session", disabled)
+    refused = await client.post(
+        "/v1/google/photos/sessions", json={"access_token": GOOGLE_TOKEN}, headers=headers
+    )
+    assert refused.status_code == 503
+    assert "switched on" in refused.json()["detail"]

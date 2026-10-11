@@ -42,6 +42,9 @@ export type DubResponse = Schemas['DubResponse'];
 export type DubListResponse = Schemas['DubListResponse'];
 export type StudySessionRequest = Schemas['StudySessionRequest'];
 export type ImportResponse = Schemas['ImportResponse'];
+export type GoogleImport = Schemas['GoogleImport'];
+export type PhotosSessionResponse = Schemas['PhotosSessionResponse'];
+export type PhotosPollResponse = Schemas['PhotosPollResponse'];
 export type StudySessionResponse = Schemas['StudySessionResponse'];
 
 export const CLIENT_VERSION = '0.1.0' as const;
@@ -199,6 +202,34 @@ export class VisioVoxClient {
       method: 'POST',
       body: JSON.stringify({ url, title: title || null, language, rights_attested: true }),
     });
+  }
+
+  /** Import a video picked in Google Drive or Google Photos; it downloads in the background. */
+  importFromGoogle(
+    google: GoogleImport,
+    title: string | null,
+    language: string | null,
+  ): Promise<ImportResponse> {
+    return this.request<ImportResponse>('/v1/imports', {
+      method: 'POST',
+      body: JSON.stringify({ google, title: title || null, language, rights_attested: true }),
+    });
+  }
+
+  /** Open a Google Photos picker session for one video. */
+  startPhotosPick(accessToken: string): Promise<PhotosSessionResponse> {
+    return this.request<PhotosSessionResponse>('/v1/google/photos/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ access_token: accessToken }),
+    });
+  }
+
+  /** Whether the person has picked in Google Photos yet, and what. */
+  pollPhotosPick(sessionId: string, accessToken: string): Promise<PhotosPollResponse> {
+    return this.request<PhotosPollResponse>(
+      `/v1/google/photos/sessions/${encodeURIComponent(sessionId)}/poll`,
+      { method: 'POST', body: JSON.stringify({ access_token: accessToken }) },
+    );
   }
 
   /** How an import is going, and the downloaded video once it is there. */

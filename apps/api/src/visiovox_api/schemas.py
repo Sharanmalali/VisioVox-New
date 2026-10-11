@@ -10,7 +10,15 @@ from __future__ import annotations
 import datetime as dt
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from .languages import is_supported
 
@@ -444,16 +452,63 @@ class StudySessionResponse(BaseModel):
     data: dict[str, Any]
 
 
+class GoogleImport(StrictModel):
+    """A video the person picked in Google Drive or Google Photos."""
+
+    kind: Literal["drive", "photos"]
+    # Short-lived, scoped to what was picked; used once by the worker, never stored.
+    access_token: str = Field(min_length=20, max_length=4096)
+    file_id: str | None = Field(default=None, max_length=200)  # Drive
+    base_url: str | None = Field(default=None, max_length=2000)  # Photos
+    session_id: str | None = Field(default=None, max_length=200)  # Photos, for clean-up
+    filename: str | None = Field(default=None, max_length=300)
+    mime_type: str | None = Field(default=None, max_length=100)
+
+
 class ImportRequest(CreateProjectRequest):
-    """Like creating a project, from a link; the title defaults to the video's."""
+    """Like creating a project, from a link or a Google pick; the title
+    defaults to the video's."""
 
     title: Title | None = None  # type: ignore[assignment]
-    url: str = Field(min_length=8, max_length=500, description="A YouTube or Vimeo link")
+    url: str | None = Field(
+        default=None, min_length=8, max_length=500, description="A YouTube or Vimeo link"
+    )
+    google: GoogleImport | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self) -> ImportRequest:
+        if (self.url is None) == (self.google is None):
+            raise ValueError("give either a link or a Google Drive / Google Photos video")
+        return self
+
+
+class PhotosSessionRequest(StrictModel):
+    access_token: str = Field(min_length=20, max_length=4096)
+
+
+class PhotosSessionResponse(BaseModel):
+    session_id: str
+    picker_uri: str
+    poll_seconds: float
+
+
+class PhotosPickedItem(BaseModel):
+    id: str | None = None
+    is_video: bool
+    base_url: str | None = None
+    filename: str | None = None
+    mime_type: str | None = None
+
+
+class PhotosPollResponse(BaseModel):
+    done: bool
+    items: list[PhotosPickedItem]
 
 
 class ImportResponse(BaseModel):
     project_id: str
     url: str
+    source: Literal["link", "drive", "photos"] = "link"
     status: Literal["queued", "downloading", "ready", "failed"]
     progress: int
     source_title: str | None = None

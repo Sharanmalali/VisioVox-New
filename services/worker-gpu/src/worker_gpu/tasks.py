@@ -1412,3 +1412,250 @@ def import_media(self: Any, import_id: str) -> dict[str, Any]:
             return {"status": "ready", "import_id": import_id, "seconds": duration_s}
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+
+# ------------------------------------------------------------ Google imports --
+
+_GOOGLE_HOSTS = (".googleapis.com", ".googleusercontent.com")
+_DRIVE_FILES = "https://www.googleapis.com/drive/v3/files"
+_PHOTOS_API = "https://photospicker.googleapis.com/v1"
+
+
+class GoogleDownloadError(Exception):
+    """A Google download that cannot go on; the message is for the person."""
+
+
+def _google_message(status: int) -> str:
+    if status == 401:
+        return "Google access expired before the download started. Choose the video again."
+    if status == 403:
+        return "Google did not allow the download. Choose the video again and allow access."
+    if status == 404:
+        return "That video is no longer in your Google account."
+    return f"Google did not send the video ({status}). Try again in a moment."
+
+
+def _google_get(url: str, token: str, *, stream: bool) -> Any:
+    """GET with the token, following redirects only within Google's hosts.
+
+    `requests` drops the Authorization header when a redirect changes host;
+    Google's media hosts need it, and no other host may receive it.
+    """
+    from urllib.parse import urljoin, urlsplit
+
+    import requests
+
+    for _ in range(5):
+        response = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            stream=stream,
+            timeout=(20, 120),
+            allow_redirects=False,
+        )
+        if response.status_code in (301, 302, 303, 307, 308) and response.headers.get("Location"):
+            nxt = urljoin(url, response.headers["Location"])
+            host = urlsplit(nxt).hostname or ""
+            response.close()
+            if urlsplit(nxt).scheme != "https" or not host.endswith(_GOOGLE_HOSTS):
+                raise GoogleDownloadError("Google redirected the download somewhere unexpected.")
+            url = nxt
+            continue
+        return response
+    raise GoogleDownloadError("Google redirected the download too many times.")
+
+
+def _download_google(url: str, token: str, dest: Path, limit: int, report: Any) -> int:
+    """Stream `url` into `dest`; `report(got, total, bytes_per_second)` every 2 s."""
+    import time
+
+    response = _google_get(url, token, stream=True)
+    with response:
+        if response.status_code >= 400:
+            raise GoogleDownloadError(_google_message(response.status_code))
+        total = int(response.headers.get("Content-Length") or 0)
+        if total > limit:
+            raise GoogleDownloadError("This video is too large to import.")
+        got, started, last = 0, time.monotonic(), 0.0
+        with dest.open("wb") as out:
+            for chunk in response.iter_content(1 << 20):
+                out.write(chunk)
+                got += len(chunk)
+                if got > limit:
+                    raise GoogleDownloadError("This video is too large to import.")
+                now = time.monotonic()
+                if now - last >= 2:
+                    last = now
+                    report(got, total, got / max(now - started, 1e-3))
+    if got == 0:
+        raise GoogleDownloadError("Google sent an empty file.")
+    return got
+
+
+def _browser_playable(source: Path, work: Path) -> Path:
+    """H.264 in MP4, so the trim preview plays everywhere (iPhones record HEVC)."""
+    import json
+    import subprocess
+
+    probe = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,pix_fmt:format=format_name", "-of", "json",
+            str(source),
+        ],
+        check=False, capture_output=True, text=True,
+    )  # fmt: skip
+    meta = json.loads(probe.stdout or "{}")
+    streams = meta.get("streams") or [{}]
+    codec = streams[0].get("codec_name")
+    pix = streams[0].get("pix_fmt")
+    container = meta.get("format", {}).get("format_name", "")
+    out = work / "playable.mp4"
+    if codec == "h264" and pix in (None, "yuv420p") and "mp4" in container:
+        return source
+    if codec == "h264" and pix in (None, "yuv420p"):
+        cmd = ["-c", "copy"]
+    else:
+        cmd = [
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-vf", "scale=-2:'min(1080,ih)'", "-c:a", "aac", "-b:a", "160k",
+        ]  # fmt: skip
+    done = subprocess.run(  # noqa: S603
+        ["ffmpeg", "-v", "error", "-y", "-i", str(source), "-map", "0:v:0", "-map", "0:a:0?",  # noqa: S607
+         *cmd, "-movflags", "+faststart", str(out)],
+        check=False, capture_output=True, text=True, timeout=7200,
+    )  # fmt: skip
+    if done.returncode != 0 or not out.is_file():
+        raise GoogleDownloadError("The video could not be read. Is it a normal video file?")
+    return out
+
+
+@celery_app.task(name="visiovox.import_google", bind=True, max_retries=0)
+def import_google(self: Any, import_id: str, google: dict[str, Any]) -> dict[str, Any]:
+    """Download a video picked in Google Drive or Google Photos into its project.
+
+    `google` carries the person's short-lived access token; it is used here,
+    never logged and never stored.
+    """
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+
+    with _Session() as session:
+        row = session.get(MediaImport, import_id)
+        if row is None:
+            return {"status": "missing", "import_id": import_id}
+        project = session.get(Project, row.project_id)
+        if project is None or project.source_key is None:
+            return {"status": "missing_project", "import_id": import_id}
+
+        def fail(reason: str) -> dict[str, Any]:
+            row.status = "failed"
+            row.error_detail = reason[:500]
+            row.finished_at = _now()
+            project.status = "failed"
+            session.commit()
+            return {"status": "failed", "import_id": import_id, "reason": reason}
+
+        token = str(google.get("access_token") or "")
+        kind = google.get("kind")
+        row.status = "downloading"
+        session.commit()
+        work_root = Path(settings.media_work_dir)
+        work_root.mkdir(parents=True, exist_ok=True)
+        work = Path(tempfile.mkdtemp(prefix=f"import-{import_id}-", dir=work_root))
+
+        def report(got: int, total: int, rate: float) -> None:
+            row.downloaded_bytes = got
+            row.total_bytes = total or None
+            row.speed_bps = int(rate)
+            row.eta_seconds = int((total - got) / rate) if total > got and rate > 0 else None
+            row.progress = max(0, min(99, int(100 * got / total))) if total else 0
+            session.commit()
+
+        try:
+            limit = min(settings.max_upload_bytes, int(shutil.disk_usage(work_root).free * 0.4))
+            filename = str(google.get("filename") or "")
+            if kind == "drive":
+                file_id = str(google.get("file_id") or "")
+                meta_response = _google_get(
+                    f"{_DRIVE_FILES}/{file_id}?fields=name,mimeType,size&supportsAllDrives=true",
+                    token,
+                    stream=False,
+                )
+                if meta_response.status_code >= 400:
+                    return fail(_google_message(meta_response.status_code))
+                meta = meta_response.json()
+                if not str(meta.get("mimeType", "")).startswith("video/"):
+                    return fail("That file is not a video. Choose a video file in Google Drive.")
+                if int(meta.get("size") or 0) > limit:
+                    return fail("This video is too large to import.")
+                filename = str(meta.get("name") or filename)
+                url = f"{_DRIVE_FILES}/{file_id}?alt=media&supportsAllDrives=true"
+            elif kind == "photos":
+                # "=dv" asks for the video itself rather than a still of it.
+                url = f"{google.get('base_url')}=dv"
+            else:
+                return fail("Unknown Google source.")
+
+            raw = work / "download"
+            _download_google(url, token, raw, limit, report)
+            if kind == "photos" and google.get("session_id"):
+                try:  # The picker session is no longer needed; tidy it away.
+                    import requests
+
+                    requests.delete(
+                        f"{_PHOTOS_API}/sessions/{google['session_id']}",
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=10,
+                    )
+                except Exception:  # noqa: S110 - best effort only
+                    pass
+            row.progress = 99
+            row.eta_seconds = None
+            session.commit()
+
+            source = _browser_playable(raw, work)
+            probe = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "ffprobe", "-v", "error", "-show_entries",
+                    "format=duration:stream=codec_type,width,height", "-of", "json", str(source),
+                ],
+                check=False, capture_output=True, text=True,
+            )  # fmt: skip
+            meta = json.loads(probe.stdout or "{}")
+            video = next(
+                (x for x in meta.get("streams", []) if x.get("codec_type") == "video"), None
+            )
+            if video is None:
+                return fail("This file has no video track; VisioVox needs to see the speakers.")
+            duration_s = float(meta.get("format", {}).get("duration") or 0)
+            if duration_s <= 0:
+                return fail("The video could not be read.")
+
+            _s3_client(settings).upload_file(
+                str(source), settings.s3_bucket, project.source_key,
+                ExtraArgs={"ContentType": "video/mp4"},
+            )  # fmt: skip
+            title = Path(filename).stem.strip() if filename else ""
+            row.source_title = title[:300] or None
+            if title and project.title == "Imported video":
+                project.title = title[:200]
+            project.source_bytes = source.stat().st_size
+            project.duration_ms = round(duration_s * 1000)
+            project.width = video.get("width")
+            project.height = video.get("height")
+            row.status = "ready"
+            row.progress = 100
+            row.finished_at = _now()
+            session.commit()
+            return {"status": "ready", "import_id": import_id, "seconds": duration_s}
+        except GoogleDownloadError as exc:
+            return fail(str(exc))
+        except Exception as exc:
+            # Never the token: only the type and a trimmed message.
+            logger.warning("google import %s failed: %s", import_id, type(exc).__name__)
+            return fail("The video could not be downloaded from Google. Try again.")
+        finally:
+            shutil.rmtree(work, ignore_errors=True)

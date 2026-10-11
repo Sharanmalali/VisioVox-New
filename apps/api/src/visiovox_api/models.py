@@ -600,6 +600,8 @@ class MediaImport(Base):
         Text, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     url: Mapped[str] = mapped_column(Text, nullable=False)
+    # 'link' (YouTube, Vimeo), 'drive' or 'photos'; `url` describes the source.
+    source: Mapped[str] = mapped_column(Text, nullable=False, server_default="link")
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="queued")
     progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     # Measured while downloading, for the time-left figure.

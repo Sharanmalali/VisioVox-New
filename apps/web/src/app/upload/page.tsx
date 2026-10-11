@@ -24,6 +24,13 @@ import {
 } from '@/components/icons';
 import { LanguageSelect } from '@/components/LanguageSelect';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import {
+  DRIVE_SCOPE,
+  PHOTOS_SCOPE,
+  forgetToken,
+  googleAccessToken,
+  pickFromDrive,
+} from '@/lib/google-media';
 import { AppPage, AppShell, PageHeader } from '@/components/shell/AppShell';
 import {
   Alert,
@@ -35,6 +42,7 @@ import {
   Skeleton,
   Slab,
   SlabHead,
+  Spinner,
   cx,
 } from '@/components/ui';
 import {
@@ -46,7 +54,7 @@ import {
   type UploadProgress,
 } from '@/lib/upload/resumable';
 import { api, useSession } from '@/lib/store';
-import type { LimitsResponse } from '@visiovox/ts-client';
+import { ApiError, type GoogleImport, type LimitsResponse } from '@visiovox/ts-client';
 
 interface Inspected {
   durationSeconds: number | null;
@@ -106,6 +114,17 @@ export default function UploadPage() {
   const handleRef = useRef<UploadHandle | null>(null);
   const [link, setLink] = useState('');
   const [importing, setImporting] = useState(false);
+  // A video picked in Google Drive or Photos, waiting for the size dialog.
+  const [google, setGoogle] = useState<(GoogleImport & { sizeBytes?: number | null }) | null>(null);
+  // An open Google Photos picker, polled until the person picks.
+  const [photos, setPhotos] = useState<{
+    sessionId: string;
+    pickerUri: string;
+    token: string;
+    pollMs: number;
+    until: number;
+  } | null>(null);
+  const [googleBusy, setGoogleBusy] = useState<'drive' | 'photos' | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -162,6 +181,126 @@ export default function UploadPage() {
     }
   }
 
+  function say(err: unknown, fallback: string): string {
+    if (err instanceof ApiError) return err.detail || fallback;
+    return err instanceof Error && err.message ? err.message : fallback;
+  }
+
+  async function chooseFromDrive() {
+    setError(null);
+    setGoogleBusy('drive');
+    try {
+      const token = await googleAccessToken(DRIVE_SCOPE);
+      if (token === null) return;
+      const pick = await pickFromDrive(token);
+      if (pick === null) return;
+      if (pick.mimeType !== '' && !pick.mimeType.startsWith('video/')) {
+        setError('That file is not a video. Choose a video in Google Drive.');
+        return;
+      }
+      setGoogle({
+        kind: 'drive',
+        access_token: token,
+        file_id: pick.fileId,
+        filename: pick.name,
+        mime_type: pick.mimeType || null,
+        sizeBytes: pick.sizeBytes,
+      });
+      setConfirming('google');
+    } catch (err) {
+      setError(say(err, 'Could not open Google Drive.'));
+    } finally {
+      setGoogleBusy(null);
+    }
+  }
+
+  async function chooseFromPhotos() {
+    setError(null);
+    setGoogleBusy('photos');
+    try {
+      const token = await googleAccessToken(PHOTOS_SCOPE);
+      if (token === null) return;
+      const session = await api().startPhotosPick(token);
+      setPhotos({
+        sessionId: session.session_id,
+        // "/autoclose" closes Google's tab once the person has picked.
+        pickerUri: `${session.picker_uri.replace(/\/$/, '')}/autoclose`,
+        token,
+        pollMs: Math.max(2000, session.poll_seconds * 1000),
+        until: Date.now() + 20 * 60 * 1000,
+      });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) forgetToken(PHOTOS_SCOPE);
+      setError(say(err, 'Could not open Google Photos.'));
+    } finally {
+      setGoogleBusy(null);
+    }
+  }
+
+  useEffect(() => {
+    if (photos === null) return;
+    let stopped = false;
+    const timer = setInterval(() => {
+      if (Date.now() > photos.until) {
+        setPhotos(null);
+        setError('Google Photos waited too long for a choice. Try again.');
+        return;
+      }
+      api()
+        .pollPhotosPick(photos.sessionId, photos.token)
+        .then((state) => {
+          if (stopped || !state.done) return;
+          setPhotos(null);
+          const video = state.items.find((i) => i.is_video && i.base_url);
+          if (video === undefined || !video.base_url) {
+            setError('That was a photo. Choose a video in Google Photos.');
+            return;
+          }
+          setGoogle({
+            kind: 'photos',
+            access_token: photos.token,
+            base_url: video.base_url,
+            session_id: photos.sessionId,
+            filename: video.filename ?? 'Google Photos video',
+            mime_type: video.mime_type ?? null,
+          });
+          setConfirming('google');
+        })
+        .catch((err: unknown) => {
+          if (stopped) return;
+          setPhotos(null);
+          setError(say(err, 'Google Photos stopped responding. Try again.'));
+        });
+    }, photos.pollMs);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [photos]);
+
+  async function importGoogle() {
+    if (google === null) return;
+    setError(null);
+    setImporting(true);
+    try {
+      // Only what the server needs; the size was for the dialog.
+      const pick: GoogleImport = {
+        kind: google.kind,
+        access_token: google.access_token,
+        file_id: google.file_id ?? null,
+        base_url: google.base_url ?? null,
+        session_id: google.session_id ?? null,
+        filename: google.filename ?? null,
+        mime_type: google.mime_type ?? null,
+      };
+      const started = await api().importFromGoogle(pick, title.trim() || null, language);
+      router.push(`/projects/${started.project_id}`);
+    } catch (err) {
+      setError(say(err, 'Could not import that video'));
+      setImporting(false);
+    }
+  }
+
   async function importLink() {
     setError(null);
     setImporting(true);
@@ -169,7 +308,7 @@ export default function UploadPage() {
       const started = await api().importFromLink(link.trim(), title.trim() || null, language);
       router.push(`/projects/${started.project_id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not import that link');
+      setError(say(err, 'Could not import that link'));
       setImporting(false);
     }
   }
@@ -189,7 +328,7 @@ export default function UploadPage() {
     progress !== null && ['uploading', 'preparing', 'finalising'].includes(progress.phase);
   const estimate = estimateProcessing(localDuration, limits);
   const minutesPerMinute = limits?.processing_seconds_per_media_second ?? 2.6;
-  const [confirming, setConfirming] = useState<'upload' | 'import' | null>(null);
+  const [confirming, setConfirming] = useState<'upload' | 'import' | 'google' | null>(null);
 
   if (!ready) {
     return (
@@ -207,15 +346,17 @@ export default function UploadPage() {
       <ConfirmDialog
         open={confirming !== null}
         title="Bigger videos take longer"
-        confirmLabel={confirming === 'import' ? 'Import video' : 'Upload and process'}
+        confirmLabel={confirming === 'upload' ? 'Upload and process' : 'Import video'}
         onCancel={() => {
           setConfirming(null);
+          setGoogle(null);
         }}
         onConfirm={() => {
           const what = confirming;
           setConfirming(null);
           if (what === 'upload') void begin();
           if (what === 'import') void importLink();
+          if (what === 'google') void importGoogle();
         }}
       >
         {confirming === 'upload' && file !== null ? (
@@ -231,6 +372,20 @@ export default function UploadPage() {
                 ? `, so about ${formatDuration(estimate)} for this ${formatDuration(localDuration)} recording`
                 : ''}
               .
+            </p>
+          </>
+        ) : confirming === 'google' && google !== null ? (
+          <>
+            <p>
+              <strong>{google.filename}</strong> is copied from your Google{' '}
+              {google.kind === 'drive' ? 'Drive' : 'Photos'} to our server first
+              {google.sizeBytes != null ? ` (${formatBytes(google.sizeBytes)})` : ''} - the larger
+              the video, the longer that takes.
+            </p>
+            <p>
+              Then you choose the part to process. The longer that part, the longer the{' '}
+              <strong>processing</strong> takes: about {formatDuration(minutesPerMinute * 60)} for
+              every minute on this server.
             </p>
           </>
         ) : (
@@ -346,10 +501,72 @@ export default function UploadPage() {
             {file === null && (
               <Slab>
                 <SlabHead
-                  label="Or import from a link"
-                  description="Paste a YouTube or Vimeo link. The video downloads on our server; then you choose the part to process."
+                  label="Or bring a video from Google or a link"
+                  description="Choose a video in your Google Drive or Google Photos, or paste a YouTube or Vimeo link. It is copied to our server; then you choose the part to process."
                 />
                 <div className="flex flex-col gap-5 p-5 sm:p-6">
+                  <div className="flex flex-col gap-2">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <Button
+                        variant="secondary"
+                        size="lg"
+                        disabled={!attested || googleBusy !== null || importing || photos !== null}
+                        onClick={() => {
+                          void chooseFromDrive();
+                        }}
+                      >
+                        {googleBusy === 'drive' ? <Spinner size={16} /> : <DriveMark />}
+                        Google Drive
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="lg"
+                        disabled={!attested || googleBusy !== null || importing || photos !== null}
+                        onClick={() => {
+                          void chooseFromPhotos();
+                        }}
+                      >
+                        {googleBusy === 'photos' ? <Spinner size={16} /> : <PhotosMark />}
+                        Google Photos
+                      </Button>
+                    </div>
+                    {!attested && (
+                      <span className="text-[13px] text-fg-muted">
+                        Tick the box below first - it applies to every way of bringing a video.
+                      </span>
+                    )}
+                    {photos !== null && (
+                      <div className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-accent bg-accent-soft p-4">
+                        <p className="inline-flex items-center gap-2 text-[14px] font-medium">
+                          <Spinner size={14} />
+                          Choose one video in Google Photos
+                        </p>
+                        <div className="flex flex-wrap gap-3">
+                          <a
+                            href={photos.pickerUri}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-9 items-center rounded-[var(--radius-sm)] bg-accent px-4 text-[14px] font-semibold text-fg-on-accent"
+                          >
+                            Open Google Photos
+                          </a>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => {
+                              setPhotos(null);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                        <p className="text-[12.5px] text-fg-secondary">
+                          It opens in a new tab and closes itself after you pick; this page carries
+                          on by itself.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                   <Field
                     label="Video link"
                     placeholder="https://www.youtube.com/watch?v=..."
@@ -590,5 +807,35 @@ export default function UploadPage() {
         </div>
       </AppPage>
     </AppShell>
+  );
+}
+
+/** A folder: where Drive files live (a plain glyph, not Google's logo). */
+function DriveMark() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.4l2 2h8.6A1.5 1.5 0 0 1 21 9.5v8A1.5 1.5 0 0 1 19.5 19h-15A1.5 1.5 0 0 1 3 17.5v-10Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** A photo: where Photos videos live (a plain glyph, not Google's logo). */
+function PhotosMark() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.7" />
+      <path
+        d="m3.5 16 5-5 4 4 2.5-2.5L20.5 18"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <circle cx="16" cy="9.5" r="1.5" fill="currentColor" />
+    </svg>
   );
 }
