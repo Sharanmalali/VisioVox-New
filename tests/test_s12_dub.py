@@ -17,6 +17,7 @@ from pipeline.s12_dub import (
     plan,
     residual_db,
     room,
+    speaker_voices,
     track_gains,
 )
 
@@ -125,6 +126,24 @@ def test_lines_are_placed_at_their_speaker_s_level_without_clipping() -> None:
     assert out[1500] == pytest.approx(0.6)  # both
     loud = assemble(background, placements, audio, {1: 0.9, 2: 0.9}, rate)
     assert float(np.max(np.abs(loud))) <= 0.95 + 1e-6
+
+
+@pytest.mark.parametrize("level", [0.2, 0.9])
+def test_each_speaker_s_dubbed_voice_alone_adds_up_to_the_dub(level: float) -> None:
+    rate = 1000
+    background = np.full(5 * rate, 0.05, dtype=np.float32)
+    placements = plan(LINES, [2000, 1000, 1000])
+    audio = {i: np.ones(round(placements[i].end_ms - placements[i].start_ms)) for i in range(3)}
+    levels = {1: level, 2: level}
+    dub = assemble(background, placements, audio, levels, rate)
+    voices = speaker_voices(background, placements, audio, levels, rate)
+    assert sorted(voices) == [1, 2]
+    # The room is scaled with the voices, so the dub is the room plus the voices.
+    gain = float(dub[-1]) / 0.05  # the last second: nobody speaks
+    assert gain == pytest.approx(1.0) if level < 0.5 else gain < 1.0
+    assert np.allclose(dub - voices[1] - voices[2], background * gain, atol=1e-5)
+    # Alone means alone: speaker 2 is silent where only speaker 1 speaks.
+    assert voices[2][500] == 0.0 and voices[1][500] > 0.0
 
 
 def test_a_reused_voice_is_labelled_with_its_pitch() -> None:

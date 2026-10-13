@@ -204,6 +204,38 @@ def residual_db(signal: np.ndarray, reference: np.ndarray, mixture: np.ndarray) 
     return float(10 * np.log10(max(along(signal), 1e-20) / max(m, 1e-20)))
 
 
+def _place(
+    out: np.ndarray,
+    placements: Sequence[Placement],
+    audio: Mapping[int, np.ndarray],
+    levels: Mapping[int, float],
+    rate: int,
+    speaker: int | None = None,
+) -> None:
+    """Add each placed line (of `speaker` only, if given) into `out`, in place."""
+    for i, p in enumerate(placements):
+        if speaker is not None and p.line.speaker != speaker:
+            continue
+        clip = np.asarray(audio.get(i, np.zeros(0)), dtype=np.float32)
+        if clip.size == 0:
+            continue
+        rms = float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
+        target = levels.get(p.line.speaker, 0.05)
+        if rms > 0:
+            clip = clip * (target / rms)
+        start = round(p.start_ms * rate / 1000)
+        if start >= len(out):
+            continue
+        end = min(len(out), start + len(clip))
+        out[start:end] += clip[: end - start]
+
+
+def headroom(signal: np.ndarray) -> float:
+    """The gain that keeps `signal` under full scale: 1, or less if it peaks past 0.95."""
+    peak = float(np.max(np.abs(signal))) if signal.size else 0.0
+    return 0.95 / peak if peak > 0.95 else 1.0
+
+
 def assemble(
     background: np.ndarray,
     placements: Sequence[Placement],
@@ -217,19 +249,33 @@ def assemble(
     `levels[speaker]` the RMS that speaker had in the recording.
     """
     out = np.asarray(background, dtype=np.float32).copy()
-    for i, p in enumerate(placements):
-        clip = np.asarray(audio.get(i, np.zeros(0)), dtype=np.float32)
-        if clip.size == 0:
-            continue
-        rms = float(np.sqrt(np.mean(np.square(clip, dtype=np.float64))))
-        target = levels.get(p.line.speaker, 0.05)
-        if rms > 0:
-            clip = clip * (target / rms)
-        start = round(p.start_ms * rate / 1000)
-        if start >= len(out):
-            continue
-        end = min(len(out), start + len(clip))
-        out[start:end] += clip[: end - start]
+    _place(out, placements, audio, levels, rate)
     peak = float(np.max(np.abs(out))) if out.size else 0.0
     # Several voices summed can exceed full scale; scale down rather than clip.
     return out / peak * 0.95 if peak > 0.95 else out
+
+
+def speaker_voices(
+    background: np.ndarray,
+    placements: Sequence[Placement],
+    audio: Mapping[int, np.ndarray],
+    levels: Mapping[int, float],
+    rate: int,
+) -> dict[int, np.ndarray]:
+    """Each dubbed speaker's new voice alone, as loud as it is inside `assemble`'s dub.
+
+    Same placement and level as the dub, and the same overall scale, so the
+    voices plus the scaled room add up to the dub: soloing one person in the
+    player is hearing exactly their part of it.
+    """
+    length = len(background)
+    voices: dict[int, np.ndarray] = {}
+    for speaker in sorted({p.line.speaker for p in placements}):
+        track = np.zeros(length, dtype=np.float32)
+        _place(track, placements, audio, levels, rate, speaker=speaker)
+        voices[speaker] = track
+    total = np.asarray(background, dtype=np.float32).copy()
+    for track in voices.values():
+        total += track
+    gain = headroom(total)
+    return {s: (t * gain).astype(np.float32) for s, t in voices.items()}

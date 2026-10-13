@@ -5,15 +5,20 @@
  * person in a voice of their own, the room kept.
  *
  * Made on request on the GPU worker - translated first if needed - and shown
- * here as its own video, beside the original player, with what it did:
- * which voice each speaker got and how well the lines fit their time.
+ * here two ways: speaker by speaker, in the same player as the original (each
+ * person's dubbed voice alone, or the whole dub), and as the dubbed video.
+ * Beside them, what it did: which voice each speaker got and how well the
+ * lines fit their time.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DubResponse, TranslationLanguageOption } from '@visiovox/ts-client';
 
 import { IconDownload, IconFilm } from '@/components/icons';
+import { Player } from '@/components/Player';
+import { fetchTranslatedTexts } from '@/components/Translation';
 import { Button, Select, Spinner } from '@/components/ui';
+import type { Manifest } from '@/lib/playback/manifest';
 import { api } from '@/lib/store';
 
 const POLL_MS = 4000;
@@ -24,6 +29,74 @@ function percent(x: unknown): string {
 
 function seconds(ms: unknown): string {
   return typeof ms === 'number' ? `${(ms / 1000).toFixed(1)} s` : '—';
+}
+
+/** Whether the dub kept each speaker's voice alone (dubs made since 2026-10-13). */
+function hasTracks(dub: DubResponse | null): boolean {
+  const tracks = dub?.stats?.['tracks'];
+  return typeof tracks === 'object' && tracks !== null;
+}
+
+/**
+ * The dub, speaker by speaker: its manifest and translated captions, fetched
+ * once the dub is ready. Null until then, or for a dub made before speakers
+ * were kept apart.
+ */
+function useDubPlayback(projectId: string, dub: DubResponse | null) {
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [texts, setTexts] = useState<ReadonlyMap<string, string> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const language = dub?.status === 'ready' && hasTracks(dub) ? dub.language : null;
+
+  useEffect(() => {
+    setManifest(null);
+    setTexts(null);
+    setError(null);
+    if (language === null) return;
+    let cancelled = false;
+    // Through a function: TypeScript narrows the flag to false across await.
+    const stopped = () => cancelled;
+    void (async () => {
+      const loaded = (await api().getDubManifest(projectId, language)) as Manifest;
+      if (stopped()) return;
+      setManifest(loaded);
+      // The dub was spoken from these translated captions; show them in the
+      // caption box, the original under each line, as the main player does.
+      const { items } = await api().listTranslations(projectId);
+      const made = items.find((t) => t.language === language && t.status === 'ready');
+      if (made === undefined || stopped()) return;
+      const map = await fetchTranslatedTexts(made.speakers ?? [], loaded.speakers);
+      if (!stopped()) setTexts(map);
+    })().catch((err: unknown) => {
+      if (!stopped()) setError(err instanceof Error ? err.message : 'The dub could not be loaded.');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, language]);
+
+  return { manifest, texts, error };
+}
+
+/**
+ * One recording at a time: starting any video on the page pauses the others,
+ * so the dub and the original never talk over each other.
+ */
+function useOnePlayerAtATime() {
+  useEffect(() => {
+    const onPlay = (event: Event) => {
+      const started = event.target;
+      if (!(started instanceof HTMLVideoElement)) return;
+      for (const other of document.querySelectorAll('video')) {
+        if (other !== started && !other.paused) other.pause();
+      }
+    };
+    // `play` does not bubble; capturing sees it on its way down.
+    document.addEventListener('play', onPlay, true);
+    return () => {
+      document.removeEventListener('play', onPlay, true);
+    };
+  }, []);
 }
 
 export function DubPanel({
@@ -38,6 +111,7 @@ export function DubPanel({
   const [choice, setChoice] = useState('hi');
   const [shown, setShown] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [view, setView] = useState<'speakers' | 'video'>('speakers');
 
   const refresh = useCallback(async () => {
     const body = await api().listDubs(projectId);
@@ -66,11 +140,11 @@ export function DubPanel({
     };
   }, [working, refresh]);
 
-  const request = async () => {
+  const request = async (language: string = choice) => {
     setError(null);
     try {
-      await api().requestDub(projectId, choice);
-      setShown(choice);
+      await api().requestDub(projectId, language);
+      setShown(language);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The dub could not be started.');
@@ -81,6 +155,15 @@ export function DubPanel({
   const current = items.find((d) => d.language === shown) ?? null;
   const stats = current?.stats ?? null;
   const voices = (stats?.['voices'] ?? {}) as Record<string, string>;
+  const playback = useDubPlayback(projectId, current);
+  useOnePlayerAtATime();
+  const separate = hasTracks(current);
+  const names = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const sp of playback.manifest?.speakers ?? [])
+      out[String(sp.ordinal)] = nameOf(sp.ordinal);
+    return out;
+  }, [playback.manifest, nameOf]);
 
   if (languages.length === 0) return null;
 
@@ -178,17 +261,84 @@ export function DubPanel({
       )}
 
       {current?.status === 'ready' && current.url != null && (
-        <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-          <video
-            key={current.url}
-            className="w-full rounded-[var(--radius-md)] bg-black"
-            src={current.url}
-            controls
-            playsInline
-            preload="metadata"
-          />
+        <div className="flex flex-col gap-4">
+          {separate ? (
+            <div className="seg w-fit" role="group" aria-label="How to watch the dub">
+              <button
+                type="button"
+                className={view === 'speakers' ? 'seg-on' : ''}
+                aria-pressed={view === 'speakers'}
+                onClick={() => {
+                  setView('speakers');
+                }}
+              >
+                Speaker by speaker
+              </button>
+              <button
+                type="button"
+                className={view === 'video' ? 'seg-on' : ''}
+                aria-pressed={view === 'video'}
+                onClick={() => {
+                  setView('video');
+                }}
+              >
+                Dubbed video
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-3 text-[13.5px] text-fg-secondary">
+              <span>
+                This dub was made before each speaker&apos;s dubbed voice was kept separately.
+              </span>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void request(current.language);
+                }}
+                disabled={working}
+              >
+                Make it speaker by speaker
+              </Button>
+            </div>
+          )}
+
+          {separate && view === 'speakers' ? (
+            playback.manifest !== null ? (
+              <Player
+                key={current.language}
+                manifest={playback.manifest}
+                names={names}
+                translated={playback.texts}
+                mixedLabels={{
+                  label: 'Whole dub',
+                  meta: `everyone, in ${nativeOf(current.language)}`,
+                  mixer: 'Whole dub (room and voices)',
+                }}
+              />
+            ) : playback.error !== null ? (
+              <p className="text-[13.5px] text-danger">{playback.error}</p>
+            ) : (
+              <p
+                className="inline-flex items-center gap-2 text-[13.5px] text-fg-secondary"
+                role="status"
+              >
+                <Spinner size={14} />
+                Loading each speaker&apos;s dubbed voice…
+              </p>
+            )
+          ) : (
+            <video
+              key={current.url}
+              className="w-full max-w-3xl rounded-[var(--radius-md)] bg-black"
+              src={current.url}
+              controls
+              playsInline
+              preload="metadata"
+            />
+          )}
+
           <div className="flex flex-col gap-3 text-[13.5px]">
-            <dl className="flex flex-col gap-1.5">
+            <dl className="flex flex-col gap-1.5 sm:max-w-md">
               {Object.entries(voices).map(([ordinal, voice]) => (
                 <div key={ordinal} className="flex justify-between gap-3">
                   <dt className="text-fg-secondary">{nameOf(Number(ordinal))}</dt>
@@ -212,8 +362,9 @@ export function DubPanel({
             </a>
             <p className="text-[12px] leading-relaxed text-fg-muted">
               Machine-translated and spoken by synthetic voices (Indic Parler-TTS) - the speakers'
-              own voices are not imitated. The room is the recording with their separated voices
-              taken out, so a little of the original may remain.
+              own voices are not imitated. Speaker by speaker, each person is their dubbed voice
+              alone; the whole dub is the room with their separated voices taken out and the dubbed
+              ones put in, so a little of the original may remain.
             </p>
           </div>
         </div>

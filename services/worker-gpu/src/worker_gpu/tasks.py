@@ -146,13 +146,13 @@ def _publish_artifacts(artifact_dir: Path, project: Project, manifest: dict[str,
     _rewrite_urls(manifest, base)
 
 
-def _upload_artifacts(directory: Path, project_id: str) -> None:
-    """Upload every packaged file to `projects/<id>/` in the bucket."""
+def _upload_artifacts(directory: Path, project_id: str, prefix: str = "") -> None:
+    """Upload every packaged file to `projects/<id>/<prefix>` in the bucket."""
     client = _s3_client(settings)
     for path in sorted(directory.rglob("*")):
         if not path.is_file():
             continue
-        key = f"projects/{project_id}/{path.relative_to(directory).as_posix()}"
+        key = f"projects/{project_id}/{prefix}{path.relative_to(directory).as_posix()}"
         # Content type matters: a browser will not play an .m4a served as
         # application/octet-stream, and the store has no reason to guess.
         content_type = _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
@@ -988,6 +988,60 @@ def _synthesise(lines: list[dict[str, Any]], work: Path) -> dict[str, Any]:
     return parsed
 
 
+def _publish_dub_tracks(
+    project_id: str,
+    language: str,
+    base: Path,
+    background: Any,
+    soundtrack: Any,
+    placements: Any,
+    audio: Any,
+    levels: Any,
+) -> dict[str, Any]:
+    """Each dubbed speaker's new voice alone, beside the dub, for the player.
+
+    Written to `dubs/<language>/tracks/`: `spk_<ordinal>.m4a` per speaker and
+    `mix.m4a`, the dub's own soundtrack, so the player can offer every person
+    and everyone together exactly as it does for the original. A long
+    recording is also packaged for streaming, as the original is (s9_hls),
+    reusing the original's video playlist when there is one.
+    """
+    import shutil
+
+    from pipeline import s12_dub
+    from pipeline.s9_hls import choose_engine, package_hls
+    from pipeline.s9_package import _encode_m4a
+
+    folder = base / "dubs" / language / "tracks"
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    voices = s12_dub.speaker_voices(background, placements, audio, levels, TTS_RATE)
+    sizes = {str(o): _encode_m4a(v, folder / f"spk_{o}.m4a", TTS_RATE) for o, v in voices.items()}
+    sizes["mix"] = _encode_m4a(soundtrack, folder / "mix.m4a", TTS_RATE)
+
+    duration_ms = round(len(soundtrack) * 1000 / TTS_RATE)
+    hint = choose_engine(duration_ms, len(voices) + 1)
+    if hint == "hls":
+        shared = base / "video" / "v.m3u8"
+        picture = base / "video.mp4"
+        try:
+            package_hls(
+                folder,
+                tracks=[(f"Speaker {o}", folder / f"spk_{o}.m4a") for o in voices]
+                + [("Dubbed mix", folder / "mix.m4a")],
+                duration_ms=duration_ms,
+                # From dubs/<language>/tracks/ up to the project's own picture.
+                video_playlist="../../../video/v.m3u8" if shared.is_file() else None,
+                video=None if shared.is_file() or not picture.is_file() else picture,
+            )
+        except Exception:
+            # As for the original: Web Audio still plays it, at a memory cost.
+            logger.warning("dub tracks for %s: HLS packaging failed", project_id, exc_info=True)
+            hint = "webaudio"
+    _upload_artifacts(folder, project_id, prefix=f"dubs/{language}/tracks/")
+    return {"speakers": sorted(voices), "bytes": sizes, "playback_hint": hint}
+
+
 @celery_app.task(name="visiovox.dub_project", bind=True, max_retries=0)
 def dub_project(self: Any, dub_id: str) -> dict[str, Any]:
     """Dub every speaker of one project into one language, keeping the room."""
@@ -1102,6 +1156,15 @@ def dub_project(self: Any, dub_id: str) -> dict[str, Any]:
                 if i in by_id
             }
             soundtrack = s12_dub.assemble(background, placements, audio, levels, TTS_RATE)
+            # Each person's dubbed voice alone, from the same run. Never at the
+            # cost of the dub itself: without it the dubbed video still stands.
+            stems: dict[str, Any] | None = None
+            try:
+                stems = _publish_dub_tracks(
+                    project.id, language, base, background, soundtrack, placements, audio, levels
+                )
+            except Exception:
+                logger.exception("dub %s: per-speaker tracks failed", dub_id)
             wav = work / "dub.wav"
             sf.write(wav, soundtrack, TTS_RATE)
 
@@ -1133,12 +1196,15 @@ def dub_project(self: Any, dub_id: str) -> dict[str, Any]:
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
-        row.stats = {
+        stats: dict[str, Any] = {
             **s12_dub.fit_stats(placements),
             "voices": {str(o): v.label or v.name for o, v in voices.items()},
             "synthesis_s": round(float(synth.get("seconds", 0.0)), 1),
             "speech_s": round(float(synth.get("speech_s", 0.0)), 1),
         }
+        if stems is not None:
+            stats["tracks"] = stems
+        row.stats = stats
         row.status = "ready"
         row.finished_at = _now()
         session.commit()

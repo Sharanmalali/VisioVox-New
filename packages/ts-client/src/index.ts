@@ -396,6 +396,16 @@ export class VisioVoxClient {
     return this.request<DubListResponse>(`/v1/projects/${projectId}/dubs`);
   }
 
+  /**
+   * A finished dub as the player plays it: the recording's manifest with each
+   * speaker's dubbed voice, and the whole dub as the "everyone" track.
+   */
+  getDubManifest(projectId: string, language: string): Promise<unknown> {
+    return this.request<unknown>(
+      `/v1/projects/${projectId}/dubs/${encodeURIComponent(language)}/manifest`,
+    );
+  }
+
   /** Dub every speaker into `language`; asking again for the same one is harmless. */
   requestDub(projectId: string, language: string): Promise<DubResponse> {
     return this.request<DubResponse>(`/v1/projects/${projectId}/dubs`, {

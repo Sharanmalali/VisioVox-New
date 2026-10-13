@@ -34,6 +34,30 @@ export interface TranslationState {
   readonly choose: (code: string | null) => void;
 }
 
+/**
+ * Each speaker's translated captions, keyed like the transcript's lines
+ * (`speakerId:start_ms`). A file that cannot be fetched costs that speaker's
+ * lines, not the rest.
+ */
+export async function fetchTranslatedTexts(
+  files: NonNullable<TranslationResponse['speakers']>,
+  speakers: Manifest['speakers'],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const file of files) {
+    const speaker = speakers.find((s) => s.ordinal === file.ordinal);
+    if (speaker === undefined) continue;
+    const response = await fetch(file.url);
+    if (!response.ok) continue;
+    const transcript = parseTranscript(await response.json());
+    for (const segment of transcript?.segments ?? []) {
+      if (segment.text.trim() !== '')
+        map.set(`${speaker.id}:${String(segment.start_ms)}`, segment.text.trim());
+    }
+  }
+  return map;
+}
+
 export function useTranslations(projectId: string, manifest: Manifest | null): TranslationState {
   const [languages, setLanguages] = useState<TranslationLanguageOption[]>([]);
   const [items, setItems] = useState<TranslationResponse[]>([]);
@@ -90,18 +114,7 @@ export function useTranslations(projectId: string, manifest: Manifest | null): T
     const stopped = () => cancelled;
     const language = active;
     void (async () => {
-      const map = new Map<string, string>();
-      for (const file of current.speakers ?? []) {
-        const speaker = manifest.speakers.find((s) => s.ordinal === file.ordinal);
-        if (speaker === undefined) continue;
-        const response = await fetch(file.url);
-        if (!response.ok) continue;
-        const transcript = parseTranscript(await response.json());
-        for (const segment of transcript?.segments ?? []) {
-          if (segment.text.trim() !== '')
-            map.set(`${speaker.id}:${String(segment.start_ms)}`, segment.text.trim());
-        }
-      }
+      const map = await fetchTranslatedTexts(current.speakers ?? [], manifest.speakers);
       if (stopped()) return;
       loaded.current.set(language, map);
       setShown({ language, map });

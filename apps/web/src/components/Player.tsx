@@ -88,7 +88,25 @@ interface PlayerProps {
    * track is selected. Lets the page offer "export this mix".
    */
   readonly onMixChange?: (mix: Readonly<Record<string, number>> | null) => void;
+  /**
+   * What the "everyone" track is called. The original recording's by default;
+   * the dub panel's player names its own (the whole dub).
+   */
+  readonly mixedLabels?: MixedLabels;
 }
+
+/** Names for the "everyone together" track: its card, its line, its mixer row. */
+export interface MixedLabels {
+  readonly label: string;
+  readonly meta: string;
+  readonly mixer: string;
+}
+
+const ORIGINAL_MIX: MixedLabels = {
+  label: 'Original mix',
+  meta: 'everyone, unprocessed',
+  mixer: 'Original mix (room)',
+};
 
 export function Player({
   manifest,
@@ -98,6 +116,7 @@ export function Player({
   below,
   translated,
   onMixChange,
+  mixedLabels = ORIGINAL_MIX,
 }: PlayerProps): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const engineRef = useRef<PlaybackEngine | null>(null);
@@ -395,6 +414,7 @@ export function Player({
         ready={ready}
         onSelect={select}
         nameOf={nameOf}
+        mixedLabels={mixedLabels}
       />
 
       {mix !== null && (
@@ -402,6 +422,7 @@ export function Player({
           speakers={manifest.speakers}
           levels={mix}
           nameOf={nameOf}
+          mixedLabel={mixedLabels.mixer}
           onChange={applyMix}
           onSolo={select}
         />
@@ -521,6 +542,7 @@ interface SpeakerRailProps {
   readonly ready: boolean;
   readonly onSelect: (id: TrackId) => void;
   readonly nameOf: (ordinal: number) => string;
+  readonly mixedLabels: MixedLabels;
 }
 
 function SpeakerRail({
@@ -529,6 +551,7 @@ function SpeakerRail({
   ready,
   onSelect,
   nameOf,
+  mixedLabels,
 }: SpeakerRailProps): React.JSX.Element {
   // A photo that fails to load (expired link, removed object) falls back to the
   // numbered tile rather than a broken-image icon.
@@ -597,8 +620,8 @@ function SpeakerRail({
         <span className="rail-face rail-face-none" aria-hidden="true">
           ∑
         </span>
-        <span className="rail-label">Original mix</span>
-        <span className="rail-meta muted">everyone, unprocessed</span>
+        <span className="rail-label">{mixedLabels.label}</span>
+        <span className="rail-meta muted">{mixedLabels.meta}</span>
       </button>
     </div>
   );
@@ -760,12 +783,14 @@ function Mixer({
   speakers,
   levels,
   nameOf,
+  mixedLabel,
   onChange,
   onSolo,
 }: {
   speakers: readonly Speaker[];
   levels: Readonly<Record<TrackId, number>>;
   nameOf: (ordinal: number) => string;
+  mixedLabel: string;
   onChange: (levels: Record<TrackId, number>) => void;
   onSolo: (id: TrackId) => void;
 }) {
@@ -773,7 +798,7 @@ function Mixer({
     ...speakers
       .filter((sp) => sp.extraction_ok)
       .map((sp) => ({ id: sp.id, label: nameOf(sp.ordinal), slot: ((sp.ordinal - 1) % 4) + 1 })),
-    { id: MIXED_TRACK, label: 'Original mix (room)', slot: null },
+    { id: MIXED_TRACK, label: mixedLabel, slot: null },
   ];
   return (
     <div className="mixer" role="group" aria-label="Voice mixer">
