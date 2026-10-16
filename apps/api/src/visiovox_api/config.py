@@ -173,7 +173,9 @@ class Settings(BaseSettings):
     # is computed from live headroom (docs/28 D2).
     max_upload_bytes: int = 50 * 1024**3
     max_duration_seconds: int = 3600
-    max_speakers: int = Field(default=4, ge=1, le=8)
+    # What /v1/limits reports. The pipeline keeps the eight who speak most
+    # (worker_gpu.real_pipeline.MAX_SPEAKERS), so the default says the same.
+    max_speakers: int = Field(default=8, ge=1, le=8)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

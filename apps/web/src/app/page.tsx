@@ -12,19 +12,21 @@ import type { ReactNode } from 'react';
 import {
   IconArrowRight,
   IconCaptions,
+  IconChart,
   IconCheck,
   IconCheckCircle,
   IconCloudUpload,
   IconCpu,
   IconDownload,
   IconFace,
+  IconFileText,
   IconGlobe,
+  IconLanguages,
   IconLayers,
   IconLock,
+  IconMic,
   IconPlay,
   IconShield,
-  IconSparkles,
-  IconUsers,
   IconWaveform,
   IconZap,
 } from '@/components/icons';
@@ -57,34 +59,34 @@ const FEATURES: ReadonlyArray<{
     visual: <ScriptCloud />,
   },
   {
-    icon: <IconUsers />,
-    title: 'One person, one track',
-    body: 'Face identity keeps someone together across camera cuts and turns of the head, so one person never shows up as two.',
+    icon: <IconLanguages />,
+    title: 'Translated captions',
+    body: 'Read any speaker in one of 40 languages, 18 of them Indian. Machine-translated, and labelled as such.',
+  },
+  {
+    icon: <IconMic />,
+    title: 'Dub every speaker',
+    body: 'Each person re-voiced in one of 14 Indian languages or English, with the rest of the room kept. Hear each new voice alone.',
+  },
+  {
+    icon: <IconFileText />,
+    title: 'Summary and action items',
+    body: 'A summary, decisions and action items, written on our own machine. Every point links to the line it came from.',
+  },
+  {
+    icon: <IconChart />,
+    title: 'Who talked, and how much',
+    body: 'Talk time, turns, interruptions and overlap for each person, on a timeline of the whole recording.',
   },
   {
     icon: <IconZap />,
     title: 'Switch in 80 milliseconds',
-    body: 'Jump between speakers mid-sentence. The audio crossfades instantly and the picture never drifts out of sync.',
+    body: 'Jump between speakers mid-sentence, or mix them yourself. The picture never drifts out of sync.',
   },
   {
     icon: <IconDownload />,
     title: 'Download or share',
-    body: 'Export any speaker as video or audio at the source’s quality, or send a link that you can revoke at any time.',
-  },
-  {
-    icon: <IconLock />,
-    title: 'Private by design',
-    body: 'Processed on our own hardware. Face crops and voiceprints are deleted the moment a job finishes.',
-  },
-  {
-    icon: <IconCaptions />,
-    title: 'Shows its uncertainty',
-    body: 'Words the recogniser is unsure of are dimmed, not hidden, and every word is a link to its moment in the audio.',
-  },
-  {
-    icon: <IconCloudUpload />,
-    title: 'Picks up where you left off',
-    body: 'Large uploads are sent in parts and resume after a dropped connection. Close the tab mid-job and come back later.',
+    body: 'Export a speaker, a clip or your own mix as video or audio, the transcript as Word or subtitles, or send a revocable link.',
   },
 ];
 
@@ -92,7 +94,7 @@ const STEPS = [
   {
     icon: <IconCloudUpload />,
     title: 'Upload',
-    body: 'Drop a meeting, interview or panel — up to 60 minutes. Uploads resume if your connection drops.',
+    body: 'Drop a meeting, interview or panel, or paste a YouTube or Vimeo link — up to 60 minutes.',
   },
   {
     icon: <IconFace />,
@@ -107,7 +109,7 @@ const STEPS = [
   {
     icon: <IconPlay />,
     title: 'Listen, read, share',
-    body: 'Pick anyone and hear only them, in sync with the video. Export or share in a click.',
+    body: 'Pick anyone and hear only them, in sync with the video. Translate, dub, summarise, export or share.',
   },
 ];
 
@@ -200,7 +202,7 @@ const FAQ = [
   },
   {
     q: 'How many people can it separate?',
-    a: 'Up to four speakers per video. Quality is best with two or three; at four it drops noticeably.',
+    a: 'Up to eight people each get a track of their own. With more on screen, the eight who speak most get tracks and everyone stays in the original mix. Separation is clearest with two or three people talking at once.',
   },
   {
     q: 'What if someone is off camera?',
@@ -213,6 +215,10 @@ const FAQ = [
   {
     q: 'Will it make up words that were not said?',
     a: 'No. Captions are transcribed from the separated audio itself, not from any restored or generated version, and words the recogniser is unsure of are shown dimmed.',
+  },
+  {
+    q: 'Is the dubbed voice the speaker’s own voice?',
+    a: 'No. Each speaker is given a synthetic voice of their own (Indic Parler-TTS). VisioVox does not clone voices. Translations and summaries are machine-generated and are labelled that way.',
   },
   {
     q: 'Can it handle music or singing?',
@@ -287,15 +293,6 @@ function ScriptCloud() {
   );
 }
 
-function Check({ children }: { children: ReactNode }) {
-  return (
-    <li className="flex items-start gap-2.5 text-[15px] text-fg-secondary">
-      <IconCheck size={18} className="mt-0.5 shrink-0 text-success" />
-      <span>{children}</span>
-    </li>
-  );
-}
-
 // ------------------------------------------------------------------ page --
 
 export default function Home() {
@@ -313,13 +310,13 @@ export default function Home() {
 
           <div className="container-x flex flex-col items-center pb-16 pt-14 text-center sm:pt-20 lg:pb-24">
             <a
-              href="#languages"
+              href="#product"
               className="animate-fade-up group inline-flex items-center gap-2 rounded-full border border-border-default bg-bg-surface/80 py-1 pl-1 pr-3 text-[13px] text-fg-secondary shadow-xs backdrop-blur transition-colors hover:border-border-strong"
             >
               <span className="rounded-full bg-accent-soft px-2 py-0.5 text-[12px] font-semibold text-accent">
                 New
               </span>
-              Captions in 100 languages, including 14 Indian
+              Dub every speaker into 14 Indian languages
               <IconArrowRight
                 size={14}
                 className="transition-transform group-hover:translate-x-0.5"
@@ -349,7 +346,7 @@ export default function Home() {
               style={{ animationDelay: '180ms' }}
             >
               <ButtonLink href="/login" size="lg">
-                Get started free
+                Get started
                 <IconArrowRight size={18} />
               </ButtonLink>
               <ButtonLink href="/demo" size="lg" variant="secondary">
@@ -362,7 +359,7 @@ export default function Home() {
               className="animate-fade-up mt-7 flex flex-wrap justify-center gap-x-6 gap-y-2 text-[13px] text-fg-muted"
               style={{ animationDelay: '240ms' }}
             >
-              {['Nothing to install', 'Videos up to 60 minutes', 'Up to 4 speakers'].map((t) => (
+              {['Nothing to install', 'Videos up to 60 minutes', 'Up to 8 speakers'].map((t) => (
                 <li key={t} className="inline-flex items-center gap-1.5">
                   <IconCheckCircle size={15} className="text-success" />
                   {t}
@@ -625,43 +622,8 @@ export default function Home() {
           </div>
         </section>
 
-        {/* --------------------------------------------------------- pricing */}
-        <section id="pricing" className="border-t border-border-subtle bg-bg-subtle py-24 sm:py-32">
-          <div className="container-x">
-            <SectionHeader align="center" eyebrow="Pricing" title="Free while in preview.">
-              Every feature, no card required. We will say clearly, in advance, if that ever
-              changes.
-            </SectionHeader>
-            <div className="mx-auto mt-14 max-w-3xl overflow-hidden rounded-[var(--radius-xl)] border border-border-default bg-bg-surface shadow-xl">
-              <div className="grid md:grid-cols-[1fr_1.15fr]">
-                <div className="flex flex-col gap-5 border-b border-border-subtle p-8 md:border-b-0 md:border-r">
-                  <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-accent-soft px-2.5 py-0.5 text-[12px] font-semibold text-accent">
-                    <IconSparkles size={13} /> Preview
-                  </span>
-                  <div>
-                    <p className="display text-5xl">₹0</p>
-                    <p className="mt-1 text-sm text-fg-muted">per month, during the preview</p>
-                  </div>
-                  <ButtonLink href="/login" size="lg" className="w-full">
-                    Create your account
-                  </ButtonLink>
-                  <p className="text-[12px] text-fg-muted">Sign in with Google or email.</p>
-                </div>
-                <ul className="flex flex-col gap-3.5 p-8">
-                  <Check>Videos up to 60 minutes</Check>
-                  <Check>Up to 4 speakers, each on their own track</Check>
-                  <Check>Word-timed captions in 100 languages</Check>
-                  <Check>Downloads at your source’s quality</Check>
-                  <Check>Revocable share links</Check>
-                  <Check>Resumable uploads</Check>
-                </ul>
-              </div>
-            </div>
-          </div>
-        </section>
-
         {/* ------------------------------------------------------- final CTA */}
-        <section className="container-x py-24 sm:py-28">
+        <section className="container-x pb-24 sm:pb-28">
           <div className="relative overflow-hidden rounded-[28px] border border-border-subtle bg-bg-surface px-6 py-16 text-center shadow-lg sm:px-12">
             <div
               className="pointer-events-none absolute inset-0 glow-backdrop opacity-80"
@@ -677,7 +639,7 @@ export default function Home() {
               </p>
               <div className="flex flex-col gap-3 sm:flex-row">
                 <ButtonLink href="/login" size="lg">
-                  Get started free <IconArrowRight size={18} />
+                  Get started <IconArrowRight size={18} />
                 </ButtonLink>
                 <ButtonLink href="/demo" size="lg" variant="secondary">
                   <IconCaptions size={18} /> See the demo

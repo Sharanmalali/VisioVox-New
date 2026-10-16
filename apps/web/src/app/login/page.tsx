@@ -178,7 +178,7 @@ export default function LoginPage() {
   // already signed in back to this page on every refresh.
   useEffect(() => {
     if (ready && signedIn) {
-      router.replace('/studio');
+      router.replace('/projects');
     }
   }, [ready, signedIn, router]);
 
@@ -201,7 +201,7 @@ export default function LoginPage() {
     setNotice(null);
     try {
       await fn();
-      router.push('/studio');
+      router.push('/projects');
     } catch (err) {
       // A closed popup is a decision, not a failure, so `explain` returns an
       // empty string for it and nothing is shown.
@@ -286,7 +286,7 @@ export default function LoginPage() {
                   <p className="text-[15px] text-fg-secondary">
                     {mode === 'signin'
                       ? 'Sign in to separate, caption and share your recordings.'
-                      : 'Free while in preview. No card required.'}
+                      : 'Sign up with Google or an email address.'}
                   </p>
                 </div>
 
