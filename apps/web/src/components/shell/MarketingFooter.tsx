@@ -24,7 +24,7 @@ const COLUMNS = [
     title: 'Account',
     links: [
       { href: '/login', label: 'Sign in' },
-      { href: '/studio', label: 'Studio' },
+      { href: '/upload', label: 'Upload a recording' },
       { href: '/projects', label: 'Your projects' },
     ],
   },

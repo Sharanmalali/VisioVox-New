@@ -11,16 +11,13 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
-import { IconFolder, IconLogOut, IconPlus, IconSparkles, Logo } from '@/components/icons';
+import { IconFolder, IconLogOut, IconPlus, Logo } from '@/components/icons';
 import { ButtonLink, cx } from '@/components/ui';
 import { useSession } from '@/lib/store';
 
 import { ThemeToggle } from './ThemeToggle';
 
-const NAV = [
-  { href: '/studio', label: 'Studio', icon: <IconSparkles size={16} /> },
-  { href: '/projects', label: 'Projects', icon: <IconFolder size={16} /> },
-];
+const NAV = [{ href: '/projects', label: 'Projects', icon: <IconFolder size={16} /> }];
 
 function UserMenu() {
   const email = useSession((s) => s.email);
@@ -131,12 +128,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             })}
           </nav>
           <div className="ml-auto flex items-center gap-2">
-            <div className="hidden sm:block">
-              <ButtonLink href="/upload" size="sm">
-                <IconPlus size={16} />
-                New upload
-              </ButtonLink>
-            </div>
+            <ButtonLink href="/upload" size="sm">
+              <IconPlus size={16} />
+              <span className="hidden sm:inline">New upload</span>
+              <span className="sm:hidden">New</span>
+            </ButtonLink>
             <ThemeToggle />
             <UserMenu />
           </div>
