@@ -86,8 +86,8 @@ const TIPS = [
   },
   {
     icon: <IconUsers size={17} />,
-    title: 'Up to four speakers',
-    body: 'Best with two or three people. At four, quality drops noticeably.',
+    title: 'Up to eight speakers',
+    body: 'Clearest with two or three people talking at once. With more than eight, the eight who speak most get tracks.',
   },
   {
     icon: <IconClock size={17} />,
@@ -487,6 +487,9 @@ export default function UploadPage() {
                         setFile(null);
                         setInspected(null);
                         setProgress(null);
+                        // The name came from this file; the next file brings its own.
+                        setTitle('');
+                        setError(null);
                       }}
                       className="grid h-9 w-9 shrink-0 place-items-center rounded-[var(--radius-sm)] text-fg-muted transition-colors hover:bg-bg-inset hover:text-fg-primary"
                     >
@@ -780,7 +783,8 @@ export default function UploadPage() {
               </Slab>
             )}
 
-            {error !== null && (
+            {/* Without a file, the error belongs to the import box and shows there. */}
+            {error !== null && file !== null && (
               <Alert tone="danger" title="Upload problem">
                 {error}
               </Alert>

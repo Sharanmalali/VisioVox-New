@@ -170,14 +170,23 @@ export function ProcessingView({
   projectTitle,
   token,
   speakerCount,
+  onDone,
 }: {
   projectId: string;
   projectTitle: string;
   token: string | null;
   speakerCount: number | null;
+  /** Called once when the stream reports the job finished, so the page can
+   *  load the result now instead of on its next slow poll. */
+  onDone?: () => void;
 }) {
   const event = useJobProgress(projectId, token);
   useTabSignal(event, projectTitle);
+
+  const finished = event !== null && TERMINAL.has(event.status);
+  useEffect(() => {
+    if (finished) onDone?.();
+  }, [finished, onDone]);
 
   const [startedAt] = useState(() => Date.now());
   const [elapsed, setElapsed] = useState(0);
@@ -225,7 +234,7 @@ export function ProcessingView({
   // `elapsed` ticks every second, which re-renders this countdown.
   void elapsed;
 
-  if (event && TERMINAL.has(event.status)) return null;
+  if (finished) return null;
 
   const current = stage ? PIPELINE_ORDER.indexOf(stage) : -1;
 

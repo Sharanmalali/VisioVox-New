@@ -134,6 +134,14 @@ export function useTranslations(projectId: string, manifest: Manifest | null): T
       const known = items.find((i) => i.language === code);
       if (known?.status === 'ready' || known?.status === 'queued' || known?.status === 'running')
         return;
+      if (known !== undefined) {
+        // A retry of a failed language: mark it queued now, or the effect
+        // above sees the old failure, reports it, and drops the choice while
+        // the new attempt is already under way.
+        setItems((list) =>
+          list.map((i) => (i.language === code ? { ...i, status: 'queued', error: null } : i)),
+        );
+      }
       void api()
         .requestTranslation(projectId, code)
         .then(() => refresh())

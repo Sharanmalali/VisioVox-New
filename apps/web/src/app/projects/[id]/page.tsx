@@ -69,8 +69,12 @@ export default function ProjectPage() {
   const [project, setProject] = useState<ProjectResponse | null>(null);
   const [job, setJob] = useState<JobResponse | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
-  // Bumped when an import starts processing, to load the new job.
+  // Bumped when an import starts processing, to load the new job, and when
+  // processing finishes, to load the result.
   const [reloads, setReloads] = useState(0);
+  const reload = useCallback(() => {
+    setReloads((n) => n + 1);
+  }, []);
   const [maxSeconds, setMaxSeconds] = useState<number | null>(null);
   // An import's own status, which "pending" alone does not tell apart.
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -153,17 +157,23 @@ export default function ProjectPage() {
     // after the first check and keeps that narrowing across `await`.
     let cancelled = false;
     const stopped = () => cancelled;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function poll() {
       try {
-        const p = await api().getProject(projectId);
-        if (stopped()) return;
-        setProject(p);
-
+        // The job first, then the project. The worker marks both finished in
+        // one commit, so a job read as finished is always followed by a
+        // project read as ready. The other order could read the project just
+        // before that commit and the job just after: polling stopped, the
+        // project still said "processing", and the player never appeared.
         const j: JobResponse | null = await api()
           .getJob(projectId)
           .catch(() => null);
-        if (stopped() || j === null) return;
+        if (stopped()) return;
+        const p = await api().getProject(projectId);
+        if (stopped()) return;
+        setProject(p);
+        if (j === null) return;
         setJob(j);
         setProgress({ status: j.status, progress: j.progress, stage: null });
 
@@ -171,7 +181,7 @@ export default function ProjectPage() {
         // ProcessingView; this exists so the page still converges if the
         // stream is blocked by a proxy that buffers text/event-stream.
         if (!TERMINAL.has(j.status)) {
-          setTimeout(() => void poll(), 10000);
+          timer = setTimeout(() => void poll(), 10000);
         }
       } catch (err) {
         if (!stopped()) setError(err instanceof Error ? err.message : 'Failed to load');
@@ -181,6 +191,7 @@ export default function ProjectPage() {
     void poll();
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [projectId, authed, reloads]);
 
@@ -344,6 +355,7 @@ export default function ProjectPage() {
                 projectTitle={project.title}
                 token={accessToken()}
                 speakerCount={project.speaker_count}
+                onDone={reload}
               />
             )}
 

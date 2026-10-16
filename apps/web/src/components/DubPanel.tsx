@@ -123,8 +123,12 @@ export function DubPanel({
   useEffect(() => {
     refresh()
       .then((list) => {
-        const ready = list.find((d) => d.status === 'ready');
-        if (ready !== undefined) setShown(ready.language);
+        // A dub still being made comes first: otherwise, opened mid-dub, the
+        // button is disabled and nothing on the panel says why.
+        const pick =
+          list.find((d) => d.status === 'queued' || d.status === 'running') ??
+          list.find((d) => d.status === 'ready');
+        if (pick !== undefined) setShown(pick.language);
       })
       .catch(() => undefined);
   }, [refresh]);

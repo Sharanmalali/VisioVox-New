@@ -114,6 +114,17 @@ export default function ProjectsPage() {
     };
   }, [projects]);
 
+  // While anything is still processing, keep the list current, so a job that
+  // finishes while you look at this page turns "Ready" without a reload.
+  const working = counts.working > 0;
+  useEffect(() => {
+    if (!authed || !working) return;
+    const id = setInterval(() => void load(), 10000);
+    return () => {
+      clearInterval(id);
+    };
+  }, [authed, working, load]);
+
   return (
     <AppShell>
       <AppPage>
