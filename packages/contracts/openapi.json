@@ -2802,6 +2802,79 @@
         "tags": ["dubs"]
       }
     },
+    "/v1/projects/{project_id}/dubs/{language}/manifest": {
+      "get": {
+        "description": "The dub as the player plays it: each speaker's dubbed voice, and the whole dub.",
+        "operationId": "get_dub_manifest_v1_projects__project_id__dubs__language__manifest_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "language",
+            "required": true,
+            "schema": {
+              "title": "Language",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "pattern": "^prj_[0-9A-HJKMNP-TV-Z]{26}$",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Dub Manifest V1 Projects  Project Id  Dubs  Language  Manifest Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Get Dub Manifest",
+        "tags": ["dubs"]
+      }
+    },
     "/v1/projects/{project_id}/events": {
       "get": {
         "description": "Server-sent progress for the processing view.",
