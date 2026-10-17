@@ -1,0 +1,16 @@
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+ & CPU only & GPU & ratio \\
+\midrule
+\textit{Processing (S0--S9)} & 6.8\,min & 76.4\,s & 5.4$\times$ \\
+\quad real-time factor & 7.84 & 1.46 &  \\
+\quad S5 faces + AV-TSE & 5.8\,min & 54.1\,s & 6.4$\times$ \\
+\quad S7 captions + diarization & 54.2\,s & 14.0\,s & 3.9$\times$ \\
+\quad CPU time used & 5,887\,s & 178\,s &  \\
+\midrule
+\textit{Dubbing into Hindi (19 lines)} & 3.9\,min & 101.1\,s & 2.3$\times$ \\
+\quad loading the voice model & 10.3\,s & 34.0\,s & 0.30$\times$ \\
+\quad speaking the lines & 3.5\,min & 56.8\,s & 3.7$\times$ \\
+\quad CPU time used & 3,671\,s & 125\,s &  \\
+\bottomrule
+\end{tabular}

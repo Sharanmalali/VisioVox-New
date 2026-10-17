@@ -1,0 +1,89 @@
+% ============================================================================
+\section{Listening by Face, and Dubbing per Speaker}
+\label{sec:listening}
+% ============================================================================
+
+Because target-speaker extraction binds every output track to a face, the separated audio is not only something to read captions from. It can be acted on: a person can be chosen by pointing at them, the voices can be rebalanced, and each voice can be replaced by a translation spoken in a voice of its own while the rest of the recording stays as it was. This section describes those three uses and measures the third, which has measurable failure modes, on AMI-AV.
+
+\subsection{Click a face, and the listener's mix}
+The face tracker of S5 already follows every face frame by frame; its runner keeps each track's box every sixth frame (about four per second) as fractions of the frame, and the boxes of all tracks merged into one person (S3) travel with that person's captions. The player draws a target over each face visible at the current time (the nearest sample within 400\,ms), mapped through the video's letterboxing and kept clear of the native controls. Selecting it switches the audio to that person's separated track (Fig.~\ref{fig:listening}a). Pointing at a face replaces the step of matching ``Speaker~2'' to a person, and it is sound only because the track \emph{is} that face's by construction.
+
+Selecting one person is not always what a listener wants. The Web Audio engine already decodes every track onto one clock and switches by gain, so a mixer sets each track's gain from 0 to 200\% with a 30\,ms glide, the original mix serving as the room (Fig.~\ref{fig:listening}b). The same levels can be exported: the server renders them with one gain per track, sums without renormalisation and limits peaks at $-0.4$\,dBFS, and when captions are burned in, only the voices that are audible in the mix are shown. The streaming engine plays one rendition at a time and does not offer mixing.
+
+\subsection{Per-speaker dubbing}
+\textbf{Voices.} Each speaker's translated captions (Section~\ref{sec:conversation}) are spoken by Indic Parler-TTS~\cite{sankar2025rasmalai,lyth2024natural}, a pretrained text-to-speech model used as released, which is conditioned on a text description of the voice and names recommended speakers for each language. Every person gets a distinct named voice, with the pitch varied when a language has fewer named voices than there are speakers, in 15 languages: 14 of India's and English. The speakers' own voices are deliberately \emph{not} imitated, because cloning a voice from a recording its owner did not consent to is outside what the system should do. The interface states that the speech is translated and synthetic.
+
+\textbf{The room.} Ordinary dubbing replaces the whole soundtrack, so laughter, other people and ambience go with it. With every person separated, only the dubbed people need removing:
+\begin{equation}
+\hat{r} = x - \sum_{k\in\mathcal{D}} g_k\, s_k ,\qquad
+\mathbf{g} = \arg\min_{\mathbf{g}} \Bigl\lVert x - \sum_{k} g_k\, s_k \Bigr\rVert^2 ,
+\label{eq:room}
+\end{equation}
+where $x$ is the mixture, $s_k$ the packaged track of person $k$ and $\mathcal{D}$ the people with translated lines. Packaged tracks are loudness-normalised (S9), so each one's scale inside the mixture is recovered by least squares rather than assumed. A person with nothing to translate is not subtracted and stays in the original language.
+
+\textbf{Timing.} Each line starts where it was spoken. Its \emph{slot} ends 120\,ms before the same person's next line, so people may overlap each other as they did, but no one overlaps themselves. A line longer than its slot is sped up without changing pitch (by at most $1.35\times$). A line still too long pushes that person's next line later, and the lag is absorbed by the next pause. Each line is played at its speaker's original speech level, and the sum is muxed under the unchanged picture. The same run also keeps each dubbed person's new voice alone, at the level it has in the dub, and packages these tracks with the dubbed soundtrack in the shape of an ordinary project, so a dub opens in the same player as the original: one person's dubbed voice, the whole dub, or the mixer.
+
+\textbf{Takes.} On one-word prompts the speech model sometimes keeps talking for seconds after the word, and sometimes produces no audio at all. A take outside $[\max(0.25, 0.04\,c),\ \max(1, 0.4+0.2\,c)]$ seconds for a line of $c$ characters, or with a peak below 0.01, is generated again with other seeds. These bounds lie well outside the 80--140\,ms per character of real lines. If no take is good, a long take is cut at the bound, since the word comes first and the babble after; a short take keeps its longest version.
+
+\begin{table}[t]
+\centering
+\caption{Dubbing on 30 AMI-AV meetings, 1,467 lines per language. CER and language identification (LID) by Whisper large-v3 on the synthesised speech against the text it was given; English re-voices the original text as a control for the voice's own pace and for the recogniser.}
+\label{tab:dub}
+\footnotesize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & Hindi & Kannada & English \\
+\midrule
+Lines fit as spoken & 78\% & 74\% & 81\% \\
+Sped up to fit (mean tempo) & 22\% (1.05) & 26\% (1.06) & 19\% (1.05) \\
+Start $>$0.3\,s late (median lag) & 4.9\% (0.97\,s) & 6.8\% (0.84\,s) & 3.9\% (0.70\,s) \\
+Dub length / original & 1.06 & 1.14 & 1.03 \\
+\midrule
+Median CER, all lines & 0.047 & 0.143 & 0.000 \\
+Median CER, lines $\geq$10 words & 0.059 & 0.108 & 0.040 \\
+LID, lines $\geq$10 words & 98\% & 89\% & 99\% \\
+\midrule
+Synthesis time / speech & 1.12 & 1.03 & 0.93 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Evaluation on AMI-AV}
+We ran the deployed code on the 30 AMI-AV meetings of Section~\ref{sec:amiav}, reusing their separation and tuning no constant. Lines are AMI's hand-aligned words per participant, split at pauses of at least 0.5\,s, after sentence-final punctuation, or at 25 words, with fillers dropped as the recogniser drops them. They are translated by the deployed NLLB, voiced by the deployed runner, and placed as above.
+
+\textbf{Leakage.} How much of a dubbed person's original voice remains under the dub was scored against their equalised headset on the 79 reliable seats with a track; two further reliable seats had no track, so their voice is not removed. Along each person's own headset, the room keeps their voice 16.5\,dB below the mixture where they speak (13.3\,dB where someone else speaks too), about 2\% of its energy. The room's total level in their solo stretches falls by only 8.6\,dB, because crosstalk into the other headsets and separation error remain. Fitting and held-out meetings agree (16.7 and 16.3\,dB). The AMI-AV mixture has no ambience of its own, so whether the room's other sounds survive is not measured here.
+
+\textbf{Fit and intelligibility.} On meetings, three quarters of the lines fit as spoken and fewer than 7\% start late (Table~\ref{tab:dub}), because conversational pauses absorb the lag. A stand-up clip of one continuous monologue, by contrast, had 53\% of its Kannada lines start late, by up to 6.5\,s. Hindi needs barely more time than re-voiced English, while Kannada needs 14\% more. Whisper's round trip recovers Hindi with median CER 0.047 and Kannada with 0.143. On 60-line samples, Bengali, Tamil, Telugu and Marathi gave medians of 0.13--0.19. Whisper's own errors on Indian languages are included in these numbers, so they bound the voice's errors from above; the English control (median 0.000) shows the floor when the recogniser is strong. Means are higher (Hindi 0.17, Kannada 0.29) because of one- and two-word lines, whose language Whisper names in only 19\% (Hindi) and 3\% (Kannada) of cases.
+
+\textbf{What the benchmark found.} Its first run exposed the two take failures above: Whisper heard nothing in 63, 77 and 80 lines (Hindi, Kannada, English), most of them 0\,ms long. In the product such a line had vanished from the dub after its speaker's voice had been removed from the room. With the take bounds, those counts fell to 5, 7 and 2, and mean CER fell from 0.240 to 0.174 (Hindi) and from 0.337 to 0.292 (Kannada). Table~\ref{tab:dub} reports the rerun. Translation quality and naturalness were not measured. The first needs references in Indian languages, and the second needs listeners.
+
+\begin{figure*}[t]
+\centering
+\begin{minipage}[b]{0.5\textwidth}
+\centering
+\includegraphics[width=\linewidth]{ui_faces.png}\\[1mm]
+\footnotesize (a) A target over each face: the person being heard is ringed and named, another is under the pointer\\[2mm]
+\includegraphics[width=\linewidth]{ui_mixer.png}\\[1mm]
+\footnotesize (b) The mixer: each voice from off to 200\%, the room separately
+\end{minipage}\hfill
+\begin{minipage}[b]{0.46\textwidth}
+\centering
+\includegraphics[width=0.86\linewidth]{ui_dub.png}\\[1mm]
+\footnotesize (c) The meeting dubbed into Hindi, speaker by speaker
+\end{minipage}
+\caption{Listening by face and per-speaker dubbing in the production interface, on AMI meeting ES2002a (faces blurred for this paper). The dub opens in the same player as the original and reports which voice each person received and how many lines fit, were sped up or start late.}
+\label{fig:listening}
+\end{figure*}
+
+\subsection{Evaluation with people: protocol}
+\label{sec:study}
+None of the measurements above involves a person, so we built a user study into the deployed system and fixed its analysis before running it. It is a within-subjects comparison of VisioVox against a baseline that is the \emph{same} player with every VisioVox feature removed, so that the controls are identical and only the features differ. Each participant uses both on two different recordings, with order and pairing counterbalanced over a four-way Latin square. On each recording they complete three tasks:
+\begin{itemize}
+\item write what one named person said during overlapped speech;
+\item find when a topic is mentioned;
+\item state an agreed action and its owner.
+\end{itemize}
+A facilitator page times each task from start to answer, stores participants only as codes, and exports the sessions. The three tasks are scored differently. The first counts as correct at token F1 of at least 0.5 against the reference transcript, and the second within $\pm 5$\,s. The third is scored by hand, blind to condition. The page also records the System Usability Scale~\cite{brooke1996sus}, read against the benchmark of 68~\cite{bangor2009sus}, and the participant's preference.
+
+The analysis, fixed in advance, uses a Wilcoxon signed-rank test on per-participant mean time and on accuracy, with the rank-biserial effect size and Holm correction across the two, plus a bootstrap interval for SUS and an exact binomial test for preference. Twelve to sixteen participants detect only large effects (about $d{=}0.9$ at 80\% power). At the time of writing no participant had taken part, and no result is reported.
