@@ -941,6 +941,8 @@ export interface components {
         JobResponse: {
             /** Error Code */
             error_code: string | null;
+            /** Error Message */
+            error_message?: string | null;
             /**
              * Estimate Jobs
              * @default 0

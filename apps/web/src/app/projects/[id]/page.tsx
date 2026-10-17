@@ -361,8 +361,10 @@ export default function ProjectPage() {
 
             {project.status === 'failed' && (
               <Alert tone="danger" title="This recording could not be separated">
-                VisioVox needs the speakers’ faces clearly on screen to tell their voices apart. The
-                processing details below show the step that stopped it.
+                {/* The worker's own reason when it refused the recording ("This
+                    file has no audio track..."); a generic one otherwise. */}
+                {job?.error_message ??
+                  'VisioVox needs the speakers’ faces clearly on screen to tell their voices apart. The processing details below show the step that stopped it.'}
               </Alert>
             )}
 

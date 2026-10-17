@@ -231,7 +231,13 @@ def run_pipeline(
             shutil.copy2(source, staged)
 
             facts = sandbox.facts_from(sandbox.probe(staged, image=settings.media_sandbox_image))
-            sandbox.assert_admissible(facts, max_duration_seconds=settings.max_duration_seconds)
+            try:
+                sandbox.assert_admissible(facts, max_duration_seconds=settings.max_duration_seconds)
+            except sandbox.UnsupportedMediaError as exc:
+                # These are written for people ("This file has no audio
+                # track..."); the probe's own errors above are not, and stay
+                # internal.
+                raise PipelineError(str(exc)) from exc
             runner.record_duration(round(facts.duration_seconds * 1000))
 
             media, s0 = s0_ingest.ingest(staged, work / "media")

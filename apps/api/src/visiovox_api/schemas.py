@@ -324,6 +324,11 @@ class JobResponse(BaseModel):
     pipeline_mode: str
     error_code: str | None
     stages: list[JobStageResponse]
+    # Why the recording was refused, in words written for the person who
+    # uploaded it ("This file has no audio track..."). Only for a refusal
+    # (PIPELINE_REFUSED): a crash's detail can carry paths and internals and is
+    # never shown.
+    error_message: str | None = None
     # Seconds left, from this machine's measured stage times (estimates.py);
     # None when finished or before anything can be said.
     eta_seconds: int | None = None

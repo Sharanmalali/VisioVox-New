@@ -727,6 +727,17 @@
             ],
             "title": "Error Code"
           },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
           "estimate_jobs": {
             "default": 0,
             "title": "Estimate Jobs",

@@ -373,6 +373,7 @@ async def get_job(project: OwnedProject, session: SessionDep) -> JobResponse:
         progress=job.progress,
         pipeline_mode=job.pipeline_mode,
         error_code=job.error_code,
+        error_message=job.error_detail if job.error_code == "PIPELINE_REFUSED" else None,
         stages=[
             JobStageResponse(
                 stage=s.stage,

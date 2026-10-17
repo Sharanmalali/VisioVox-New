@@ -228,6 +228,22 @@ def _fetch_source(settings: Settings, key: str, job_id: str) -> Path:
     return target
 
 
+def _refusal(exc: BaseException) -> PipelineError | None:
+    """The refusal behind a pipeline failure, if it was one.
+
+    Every stage wraps what it raises in StageFailedError, so a refusal raised
+    inside a stage ("No faces were found...") arrives as that wrapper's cause.
+    Treating the wrapper as a crash recorded every such refusal as an internal
+    error, and the page could only say something generic.
+    """
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, PipelineError):
+            return seen
+        seen = seen.__cause__
+    return None
+
+
 @celery_app.task(name="visiovox.run_real_pipeline", bind=True, max_retries=2)
 def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
     """Execute the real pipeline for one job."""
@@ -269,23 +285,24 @@ def run_real_pipeline(self: Any, job_id: str) -> dict[str, Any]:
                 project_id=project.id,
                 language=project.language,
             )
-        except PipelineError as exc:
-            # A clean refusal: the recording cannot yield a result, and the
-            # message is written to be shown to a person.
-            job.status = "failed"
-            job.error_code = "PIPELINE_REFUSED"
-            job.error_detail = str(exc)[:500]
-            job.finished_at = _now()
-            project.status = "failed"
-            project.warnings = list(runner.report.warnings)
-            session.commit()
-            publish(
-                settings.redis_url,
-                job_id,
-                {"status": "failed", "progress": job.progress, "stage": None},
-            )
-            return {"status": "failed", "job_id": job_id, "reason": str(exc)}
         except Exception as exc:
+            refused = _refusal(exc)
+            if refused is not None:
+                # A clean refusal: the recording cannot yield a result, and the
+                # message is written to be shown to a person.
+                job.status = "failed"
+                job.error_code = "PIPELINE_REFUSED"
+                job.error_detail = str(refused)[:500]
+                job.finished_at = _now()
+                project.status = "failed"
+                project.warnings = list(runner.report.warnings)
+                session.commit()
+                publish(
+                    settings.redis_url,
+                    job_id,
+                    {"status": "failed", "progress": job.progress, "stage": None},
+                )
+                return {"status": "failed", "job_id": job_id, "reason": str(refused)}
             logger.exception("pipeline crashed for job %s", job_id)
             job.status = "failed"
             job.error_code = "PIPELINE_ERROR"
